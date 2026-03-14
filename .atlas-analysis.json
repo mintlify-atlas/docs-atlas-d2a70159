@@ -1,0 +1,115 @@
+{
+  "projectType": "saas",
+  "projectName": "Bodeguita",
+  "projectDescription": "Android mobile application for managing sales, purchases, products, suppliers and cash closure for local stores",
+  "theme": "almond",
+  "primaryColor": "#f76040",
+  "lightColor": "#13c5be",
+  "darkColor": "#a35cfb",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/dashboard",
+              "features/products",
+              "features/sales",
+              "features/purchases",
+              "features/suppliers",
+              "features/cash-closure"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/mvvm-pattern",
+              "architecture/database"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Data Layer",
+            "pages": [
+              "api/models",
+              "api/dao",
+              "api/repositories"
+            ]
+          },
+          {
+            "group": "Presentation Layer",
+            "pages": [
+              "api/viewmodels",
+              "api/screens",
+              "api/components"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/theming",
+              "guides/navigation",
+              "guides/testing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Product inventory management with categories and stock control",
+    "Sales recording with multi-product support and automatic inventory updates",
+    "Purchase tracking from suppliers with cost calculation",
+    "Cash closure with daily reports and financial summaries",
+    "Supplier management and relationship tracking",
+    "Dashboard with statistics and quick access to modules",
+    "Dark/light theme support",
+    "Room database for local data persistence"
+  ],
+  "publicApiSurface": [
+    "Product - Data model for products with code, price, stock, category",
+    "Sale - Data model for sales transactions",
+    "Purchase - Data model for purchase records",
+    "Category - Data model for product categories",
+    "Supplier - Data model for supplier information",
+    "Movement - Data model for cash movements",
+    "ProductDao - Database access for products",
+    "SaleDao - Database access for sales",
+    "PurchaseDao - Database access for purchases",
+    "CategoryDao - Database access for categories",
+    "SupplierDao - Database access for suppliers",
+    "MovementDao - Database access for movements",
+    "ProductRepository - Business logic for product operations",
+    "SaleRepository - Business logic for sales operations",
+    "PurchaseRepository - Business logic for purchase operations",
+    "CategoryRepository - Business logic for category operations",
+    "ProductViewModel - UI state management for products",
+    "SalesViewModel - UI state management for sales",
+    "PurchasesViewModel - UI state management for purchases",
+    "DashboardViewModel - UI state management for dashboard",
+    "CashClosureViewModel - UI state management for cash closure",
+    "DashboardScreen - Main dashboard UI",
+    "ProductListScreen - Product listing UI",
+    "ProductRegistrationScreen - Product registration/edit UI",
+    "SalesScreen - Sales management UI",
+    "PurchasesScreen - Purchases management UI",
+    "CashClosureScreen - Cash closure UI",
+    "ProfileScreen - User profile UI",
+    "LoginScreen - Authentication UI"
+  ]
+}
