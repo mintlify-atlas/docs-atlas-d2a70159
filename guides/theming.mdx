@@ -1,0 +1,328 @@
+---
+title: 'Theming'
+description: 'Customize colors, typography, and dark mode in Bodeguita'
+icon: 'palette'
+---
+
+Bodeguita uses Material Design 3 theming with full dark mode support. The theme system is built on Jetpack Compose and provides consistent styling across the app.
+
+## Theme Architecture
+
+The theme system consists of three main components located in `app/src/main/java/com/trabajo/minitienda/ui/theme/`:
+
+- **Color.kt** - Color palette definitions
+- **Type.kt** - Typography styles
+- **Theme.kt** - Theme composition and dark mode handling
+
+## Color System
+
+Colors are defined in `ui/theme/Color.kt:1` using Material Design 3 color roles.
+
+### Brand Colors
+
+```kotlin
+val PrimaryGreen = Color(0xFF16A34A)
+val PrimaryGreenHover = Color(0xFF22C55E)
+```
+
+### Background Colors
+
+```kotlin
+val BackgroundStart = Color(0xFFFAFAF8)      // warm stone-50
+val BackgroundEnd = Color(0xFFF5F5F4)        // stone-100
+val CardBackground = Color(0xFFFFFFFF)
+val SecondaryBackground = Color(0xFFF5F5F0)
+val InputBackground = Color(0xFFF9FAF8)
+```
+
+### Status Colors
+
+```kotlin
+val WarningColor = Color(0xFFF97316)
+val ErrorColor = Color(0xFFDC2626)
+val SuccessColor = Color(0xFF16A34A)
+```
+
+### Chart Colors
+
+```kotlin
+val ChartGreen1 = Color(0xFF16A34A)
+val ChartGreen2 = Color(0xFF22C55E)
+val ChartGreen3 = Color(0xFF4ADE80)
+val ChartGreen4 = Color(0xFF86EFAC)
+val ChartGreen5 = Color(0xFFBBF7D0)
+```
+
+## Color Schemes
+
+Bodeguita defines separate color schemes for light and dark modes in `ui/theme/Theme.kt:16`.
+
+### Light Color Scheme
+
+```kotlin
+private val LightColorScheme = lightColorScheme(
+    primary = PrimaryGreen,
+    secondary = PrimaryGreenHover,
+    background = BackgroundStart,
+    surface = CardBackground,
+    error = ErrorColor,
+    onPrimary = CardBackground,
+    onSecondary = PrimaryText,
+    onBackground = PrimaryText,
+    onSurface = PrimaryText,
+    onError = CardBackground
+)
+```
+
+### Dark Color Scheme
+
+```kotlin
+private val DarkColorScheme = darkColorScheme(
+    primary = Color(0xFF66BB6A),           // Lighter green for dark mode
+    secondary = Color(0xFF81C784),         // Secondary green
+    background = Color(0xFF121212),        // Dark background
+    surface = Color(0xFF1E1E1E),          // Dark cards
+    error = Color(0xFFEF5350),            // Light red
+    onPrimary = Color(0xFF1A1A1A),        // Text on primary
+    onSecondary = Color(0xFFE0E0E0),      // Text on secondary
+    onBackground = Color(0xFFE0E0E0),     // Primary text (light)
+    onSurface = Color(0xFFE0E0E0),        // Text on surface
+    onError = Color.White                  // Text on error
+)
+```
+
+## Typography
+
+Typography styles are defined in `ui/theme/Type.kt:9` using Material Design 3 type scale.
+
+### Display Styles (Headings)
+
+```kotlin
+val Typography = Typography(
+    // H1 - Page titles
+    displayLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Medium,
+        fontSize = 32.sp,
+        lineHeight = 48.sp
+    ),
+    // H2 - Section titles
+    displayMedium = TextStyle(
+        fontWeight = FontWeight.Medium,
+        fontSize = 28.sp,
+        lineHeight = 42.sp
+    ),
+    // H3 - Card titles
+    displaySmall = TextStyle(
+        fontWeight = FontWeight.Medium,
+        fontSize = 24.sp,
+        lineHeight = 36.sp
+    )
+)
+```
+
+### Body Styles
+
+```kotlin
+// Body text
+bodyLarge = TextStyle(
+    fontFamily = FontFamily.Default,
+    fontWeight = FontWeight.Normal,
+    fontSize = 16.sp,
+    lineHeight = 24.sp,
+    letterSpacing = 0.15.sp
+),
+// Small text for metadata
+bodySmall = TextStyle(
+    fontWeight = FontWeight.Normal,
+    fontSize = 14.sp,
+    lineHeight = 20.sp,
+    letterSpacing = 0.1.sp
+)
+```
+
+## Dark Mode Management
+
+Bodeguita uses `ThemeManager` located in `utils/ThemeManager.kt:10` to persist and manage theme preferences.
+
+### ThemeManager Implementation
+
+<Steps>
+  <Step title="Initialize ThemeManager">
+    ThemeManager uses SharedPreferences to persist the theme preference:
+
+    ```kotlin
+    class ThemeManager(context: Context) {
+        private val prefs = context.getSharedPreferences(
+            "mini_tienda_theme", 
+            Context.MODE_PRIVATE
+        )
+        private val THEME_KEY = "is_dark_theme"
+        
+        private val _isDarkTheme = MutableStateFlow(getSavedTheme())
+        val isDarkTheme: StateFlow<Boolean> = _isDarkTheme.asStateFlow()
+    }
+    ```
+  </Step>
+
+  <Step title="Toggle Theme">
+    Use the `toggleTheme()` method to switch between light and dark modes:
+
+    ```kotlin
+    fun toggleTheme() {
+        val newTheme = !_isDarkTheme.value
+        _isDarkTheme.value = newTheme
+        prefs.edit().putBoolean(THEME_KEY, newTheme).apply()
+    }
+    ```
+  </Step>
+
+  <Step title="Apply Theme in Composables">
+    The theme is applied in `ui/theme/Theme.kt:44`:
+
+    ```kotlin
+    @Composable
+    fun MiniTiendaTheme(
+        darkTheme: Boolean = isSystemInDarkTheme(),
+        content: @Composable () -> Unit
+    ) {
+        val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+        val view = LocalView.current
+
+        if (!view.isInEditMode) {
+            SideEffect {
+                val window = (view.context as Activity).window
+                window.statusBarColor = colorScheme.primary.toArgb()
+                WindowCompat.getInsetsController(window, view)
+                    .isAppearanceLightStatusBars = !darkTheme
+            }
+        }
+
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = Typography,
+            content = content
+        )
+    }
+    ```
+  </Step>
+</Steps>
+
+## Customizing Colors
+
+<Steps>
+  <Step title="Define Custom Colors">
+    Add your custom colors to `ui/theme/Color.kt`:
+
+    ```kotlin
+    val CustomBlue = Color(0xFF2563EB)
+    val CustomBlueDark = Color(0xFF1E40AF)
+    ```
+  </Step>
+
+  <Step title="Update Color Schemes">
+    Add your colors to the appropriate color scheme in `ui/theme/Theme.kt`:
+
+    ```kotlin
+    private val LightColorScheme = lightColorScheme(
+        primary = CustomBlue,  // Changed from PrimaryGreen
+        // ... other colors
+    )
+    ```
+  </Step>
+
+  <Step title="Use in Composables">
+    Access theme colors using `MaterialTheme.colorScheme`:
+
+    ```kotlin
+    @Composable
+    fun MyButton() {
+        Button(
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary
+            )
+        ) {
+            Text("Click me")
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Customizing Typography
+
+<Steps>
+  <Step title="Modify Type Styles">
+    Edit typography values in `ui/theme/Type.kt:9`:
+
+    ```kotlin
+    val Typography = Typography(
+        displayLarge = TextStyle(
+            fontSize = 36.sp,  // Changed from 32.sp
+            fontWeight = FontWeight.Bold  // Changed from Medium
+        )
+    )
+    ```
+  </Step>
+
+  <Step title="Use Custom Fonts">
+    Add custom font files to `res/font/` and define a FontFamily:
+
+    ```kotlin
+    val CustomFontFamily = FontFamily(
+        Font(R.font.roboto_regular, FontWeight.Normal),
+        Font(R.font.roboto_bold, FontWeight.Bold)
+    )
+
+    val Typography = Typography(
+        displayLarge = TextStyle(
+            fontFamily = CustomFontFamily,
+            fontSize = 32.sp
+        )
+    )
+    ```
+  </Step>
+
+  <Step title="Apply Typography">
+    Use typography styles in your composables:
+
+    ```kotlin
+    @Composable
+    fun MyText() {
+        Text(
+            text = "Hello",
+            style = MaterialTheme.typography.displayLarge
+        )
+    }
+    ```
+  </Step>
+</Steps>
+
+## Best Practices
+
+<Card title="Always Use Theme Colors" icon="palette">
+  Never hardcode colors. Always use `MaterialTheme.colorScheme` to ensure dark mode compatibility.
+</Card>
+
+<Card title="Test Both Themes" icon="sun-bright">
+  Test all screens in both light and dark modes to ensure proper contrast and readability.
+</Card>
+
+<Card title="Semantic Color Names" icon="tag">
+  Use semantic color roles (primary, secondary, error) instead of descriptive names (green, red) for better theme flexibility.
+</Card>
+
+<Card title="Consistent Typography" icon="font">
+  Use predefined typography styles from `MaterialTheme.typography` for consistent text hierarchy.
+</Card>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Material Design 3" icon="material-ui" href="https://m3.material.io/">
+    Official Material Design 3 guidelines
+  </Card>
+  <Card title="Compose Theme" icon="paintbrush" href="https://developer.android.com/jetpack/compose/designsystems/material3">
+    Material 3 in Jetpack Compose
+  </Card>
+</CardGroup>

@@ -1,80 +1,387 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart Guide
+description: Get started with Bodeguita in minutes - learn the basics and navigate through main features
 ---
 
-## Get started in three steps
+## First Launch and Login
 
-Get your documentation site running locally and make your first customization.
+When you first launch Bodeguita, you'll be greeted with an elegant login screen featuring a gradient background and animated shopping cart logo.
 
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+<Steps>
+  <Step title="Open Bodeguita">
+    Launch the application from your device's app drawer.
+  </Step>
+  
+  <Step title="Enter Credentials">
+    Use the default admin credentials to log in:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    - **Username**: `admin`
+    - **Password**: `1234`
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    ```kotlin app/src/main/java/com/trabajo/minitienda/screens/LoginScreen.kt
+    // Default login credentials
+    private val DEFAULT_PASSWORD = "1234"
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    // Login validation
+    if (username == "admin" && password == savedPassword) {
+        navController.navigate("dashboard") {
+            popUpTo("login") { inclusive = true }
+        }
+    }
+    ```
+  </Step>
+  
+  <Step title="First Login">
+    Click the **Ingresar** button to access the dashboard. The app will validate your credentials and navigate you to the main panel.
+  </Step>
+</Steps>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+<Warning>
+For security purposes, it's highly recommended to change the default password immediately after your first login. Click "Cambiar contraseña de admin" on the login screen to set a new password.
+</Warning>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+## Understanding the Main Navigation
 
-### Step 3: Go live
+Bodeguita uses a side drawer navigation system with quick access to all major modules:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+```kotlin app/src/main/java/com/trabajo/minitienda/screens/MainNavigation.kt
+val drawerItems = listOf(
+    DrawerItem("Panel", "dashboard", Icons.Default.Dashboard),
+    DrawerItem("Productos", "products", Icons.Default.Inventory),
+    DrawerItem("Ventas", "sales", Icons.Default.ShoppingCart),
+    DrawerItem("Compras", "purchases", Icons.Default.AddShoppingCart),
+    DrawerItem("Cierre", "cash_closure", Icons.Default.AccountBalance),
+    DrawerItem("Perfil", "profile", Icons.Default.Person)
+)
+```
 
-## Next steps
+### Opening the Navigation Drawer
 
-Now that you have your docs running, explore these key features:
+From any screen, tap the **menu icon** (three horizontal lines) in the top-left corner to open the navigation drawer and access different modules.
 
-<CardGroup cols={2}>
+## Dashboard Overview
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+After logging in, you'll land on the Dashboard - your central hub for monitoring store activity.
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+### Key Metrics
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+The dashboard displays four main metrics:
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+```kotlin app/src/main/java/com/trabajo/minitienda/screens/DashboardScreen.kt
+val metrics = listOf(
+    DashboardMetric(
+        badge = "Hoy",
+        title = "Ventas",
+        helper = "Transacciones del día",
+        value = todaySales.toString(),
+        icon = Icons.Default.ShoppingCart
+    ),
+    DashboardMetric(
+        badge = "Hoy",
+        title = "Unidades vendidas",
+        helper = "Sumatoria de ítems",
+        value = todayUnits.toString(),
+        icon = Icons.Default.Inventory
+    ),
+    DashboardMetric(
+        badge = "Inventario",
+        title = "Total productos",
+        helper = "Registrados en stock",
+        value = totalProducts.toString(),
+        icon = Icons.Default.Inventory2
+    ),
+    DashboardMetric(
+        badge = "Última venta",
+        title = "Monto",
+        helper = lastSale?.let { "ID #${it.id} • ${fechaString(it.fecha)}" },
+        value = "S/ " + String.format("%.2f", lastSale?.total ?: 0.0),
+        icon = Icons.Default.AttachMoney
+    )
+)
+```
 
-</CardGroup>
+<Info>
+All metrics update in real-time as you perform operations like adding products, making sales, or recording purchases.
+</Info>
+
+### Weekly Activity Chart
+
+Below the metrics, you'll find a visual chart showing your weekly sales activity, helping you identify trends and peak sales periods.
+
+### Low Stock Alerts
+
+The dashboard automatically monitors your inventory and displays a warning banner for products with stock below 10 units:
+
+```kotlin app/src/main/java/com/trabajo/minitienda/screens/DashboardScreen.kt
+val lowStockItems = products
+    .filter { it.stock < 10 }
+    .sortedBy { it.stock }
+    .map { it.name to it.stock }
+
+if (lowStockItems.isNotEmpty()) {
+    DashboardLowStockBanner(
+        lowStockItems = lowStockItems,
+        onSeeProducts = { navController.navigate("products") }
+    )
+}
+```
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+Click "Ver todos" on the low stock banner to quickly navigate to the Products module and restock items.
 </Note>
+
+### Quick Actions
+
+At the bottom of the dashboard, you'll find four quick action cards:
+
+- **Productos**: Manage your inventory
+- **Ventas**: Record new sales
+- **Compras**: Register purchases
+- **Cierre de Caja**: View cash closure reports
+
+## Quick Tour of Main Features
+
+### 1. Managing Products
+
+<Steps>
+  <Step title="Navigate to Products">
+    Open the navigation drawer and tap **Productos**, or click the "Productos" quick action card on the dashboard.
+  </Step>
+  
+  <Step title="View Product List">
+    You'll see a list of all registered products with their stock levels, prices, and categories. Use the search bar to find specific products by name or category.
+  </Step>
+  
+  <Step title="Add a New Product">
+    Tap the **+** floating action button to open the product registration screen. Fill in:
+    - Product name
+    - Category
+    - Initial stock quantity
+    - Purchase price
+    - Sale price
+  </Step>
+  
+  <Step title="Save Product">
+    Click **Guardar** to add the product to your inventory. The product will immediately appear in your product list and affect dashboard metrics.
+  </Step>
+</Steps>
+
+<Info>
+**Product Features**:
+- Assign categories for better organization
+- Set different purchase and sale prices
+- Track stock levels automatically
+- Edit or delete products as needed
+- Search products by name or category
+</Info>
+
+### 2. Recording Sales
+
+<Steps>
+  <Step title="Navigate to Sales">
+    From the navigation drawer, select **Ventas** or use the quick action card.
+  </Step>
+  
+  <Step title="Select Products">
+    Browse or search for products you want to sell. Tap on a product to add it to the current sale.
+  </Step>
+  
+  <Step title="Set Quantities">
+    For each product, specify the quantity being sold. The system will automatically:
+    - Calculate line item totals
+    - Update the running subtotal
+    - Check available stock
+    - Calculate taxes and final total
+  </Step>
+  
+  <Step title="Complete Sale">
+    Review the sale details and tap **Confirmar Venta** to finalize. The system will:
+    - Deduct sold items from inventory
+    - Record the transaction with date and time
+    - Update dashboard metrics
+    - Make the sale available in reports
+  </Step>
+</Steps>
+
+<Warning>
+The system prevents overselling. If you try to sell more items than available in stock, you'll receive an error message and the sale will be blocked.
+</Warning>
+
+### 3. Registering Purchases
+
+<Steps>
+  <Step title="Navigate to Purchases">
+    Open the navigation drawer and select **Compras**.
+  </Step>
+  
+  <Step title="Select Supplier">
+    Choose the supplier you're purchasing from. If the supplier doesn't exist, you can add them from the Suppliers module.
+  </Step>
+  
+  <Step title="Add Products to Purchase">
+    Select products and specify quantities being purchased. The system calculates the total cost based on purchase prices.
+  </Step>
+  
+  <Step title="Complete Purchase">
+    Confirm the purchase to:
+    - Add purchased quantities to inventory
+    - Record the transaction
+    - Link the purchase to the supplier
+    - Update cash closure reports
+  </Step>
+</Steps>
+
+### 4. Viewing Cash Closure
+
+<Steps>
+  <Step title="Navigate to Cash Closure">
+    From the drawer menu, tap **Cierre** or use the dashboard quick action.
+  </Step>
+  
+  <Step title="Review Daily Summary">
+    The cash closure screen displays:
+    - Total sales for the day
+    - Total purchases for the day
+    - Gross income from sales
+    - Expenses from purchases
+    - Net profit/loss calculation
+  </Step>
+  
+  <Step title="Filter by Date">
+    Use the date picker to view cash closure reports for specific days, helping you track performance over time.
+  </Step>
+</Steps>
+
+<Info>
+Cash closure reports are generated automatically based on your sales and purchase transactions. No manual entry required!
+</Info>
+
+## Navigation Structure
+
+Understand how the app's navigation flows:
+
+```kotlin app/src/main/java/com/trabajo/minitienda/screens/MainNavigation.kt
+NavHost(navController = navController, startDestination = "login") {
+    composable("login") { LoginScreen(navController) }
+    
+    composable("dashboard") {
+        DashboardScreen(
+            navController = navController,
+            productViewModel = productViewModel,
+            salesViewModel = salesViewModel,
+            dashboardViewModel = dashboardViewModel,
+            onMenuClick = openDrawer
+        )
+    }
+    
+    composable("products") {
+        ProductListScreen(navController, productViewModel, onMenuClick = openDrawer)
+    }
+    
+    composable("product_registration") {
+        ProductRegistrationScreen(
+            navController, productViewModel, categoryViewModel,
+            onMenuClick = openDrawer
+        )
+    }
+    
+    composable("sales") {
+        SalesScreen(navController, salesViewModel, onMenuClick = openDrawer)
+    }
+    
+    composable("purchases") {
+        PurchasesScreen(
+            navController = navController,
+            purchasesVM = purchasesViewModel,
+            onMenuClick = openDrawer
+        )
+    }
+    
+    composable("cash_closure") {
+        CashClosureScreen(navController, vm = cashClosureVM, onMenuClick = openDrawer)
+    }
+    
+    composable("profile") {
+        ProfileScreen(
+            navController, onMenuClick = openDrawer, themeManager = themeManager
+        )
+    }
+}
+```
+
+## Tips for Success
+
+<CardGroup cols={2}>
+  <Card title="Start with Products" icon="box">
+    Before recording sales, populate your inventory with products. This ensures accurate stock tracking from the beginning.
+  </Card>
+  
+  <Card title="Use Categories" icon="tags">
+    Organize products into categories (e.g., Beverages, Snacks, Household) to make searching and management easier.
+  </Card>
+  
+  <Card title="Monitor Stock Daily" icon="chart-line">
+    Check the dashboard's low stock alerts regularly to avoid running out of popular items.
+  </Card>
+  
+  <Card title="Review Cash Closure" icon="money-bill">
+    End each day by reviewing the cash closure report to track your store's financial performance.
+  </Card>
+</CardGroup>
+
+## Common Workflows
+
+### Daily Opening Routine
+
+1. Log in to Bodeguita
+2. Check the dashboard for low stock alerts
+3. Review yesterday's cash closure
+4. Restock items as needed via Purchases
+5. Start recording sales
+
+### Adding New Products
+
+1. Navigate to Products module
+2. Click the + button
+3. Fill in product details
+4. Assign a category
+5. Set initial stock and prices
+6. Save the product
+
+### Processing a Sale
+
+1. Go to Sales module
+2. Search and add products to cart
+3. Set quantities for each item
+4. Review total amount
+5. Confirm the sale
+
+### Recording Supplier Purchases
+
+1. Navigate to Purchases
+2. Select or add a supplier
+3. Choose products and quantities
+4. Verify total cost
+5. Complete the purchase
+
+## Next Steps
+
+Now that you're familiar with the basics, explore detailed documentation for each module:
+
+<CardGroup cols={2}>
+  <Card title="Products Module" icon="box" href="/features/products">
+    Deep dive into product management, categories, and inventory control
+  </Card>
+  
+  <Card title="Sales Module" icon="shopping-cart" href="/features/sales">
+    Master sales recording, transaction history, and customer management
+  </Card>
+  
+  <Card title="Purchases Module" icon="cart-shopping" href="/features/purchases">
+    Learn advanced purchase recording and supplier management
+  </Card>
+  
+  <Card title="Cash Closure" icon="money-bill" href="/features/cash-closure">
+    Understand financial reports and daily reconciliation
+  </Card>
+</CardGroup>

@@ -1,0 +1,899 @@
+---
+title: 'Screens'
+description: 'Jetpack Compose UI screens for sales, inventory, and business management'
+icon: 'window'
+---
+
+## Overview
+
+All screens are built with **Jetpack Compose** following Material Design 3 guidelines. Each screen is a `@Composable` function that integrates with ViewModels for state management and navigation.
+
+## Common Pattern
+
+All screens follow this structure:
+
+```kotlin
+@Composable
+fun ScreenName(
+    navController: NavController,
+    viewModel: SomeViewModel,
+    onMenuClick: () -> Unit
+) {
+    PageLayout(
+        title = "Screen Title",
+        onMenuClick = onMenuClick
+    ) {
+        // Screen content
+    }
+}
+```
+
+---
+
+## DashboardScreen
+
+Main dashboard with real-time metrics, weekly sales chart, and quick actions.
+
+### Signature
+
+```kotlin
+@Composable
+fun DashboardScreen(
+    navController: NavController,
+    productViewModel: ProductViewModel,
+    salesViewModel: SalesViewModel,
+    dashboardViewModel: DashboardViewModel,
+    onMenuClick: () -> Unit
+)
+```
+
+### Key UI Elements
+
+**1. Metrics Grid**
+```kotlin
+val todaySales = dashboardViewModel.todaySalesCount.collectAsState(initial = 0).value
+val todayUnits = dashboardViewModel.todayUnitsSold.collectAsState(initial = 0).value
+val lastSale = dashboardViewModel.lastSaleBrief.collectAsState(initial = null).value
+val products = productViewModel.products.collectAsState(initial = emptyList()).value
+
+DashboardStatsGrid(
+    todaySales = todaySales,
+    todayUnits = todayUnits,
+    lastSale = lastSale,
+    totalProducts = products.size
+)
+```
+
+**2. Weekly Activity Chart**
+```kotlin
+ActividadSemanalChart(salesViewModel = salesViewModel)
+```
+
+**3. Low Stock Banner**
+```kotlin
+val lowStockItems = products
+    .filter { it.stock < 10 }
+    .sortedBy { it.stock }
+    .map { it.name to it.stock }
+
+if (lowStockItems.isNotEmpty()) {
+    DashboardLowStockBanner(
+        lowStockItems = lowStockItems,
+        onSeeProducts = { navController.navigate("products") }
+    )
+}
+```
+
+**4. Quick Actions**
+```kotlin
+DashboardQuickActionsGrid { route -> navController.navigate(route) }
+```
+
+### User Interactions
+
+- View real-time sales metrics
+- Monitor low stock products
+- Navigate to Products, Sales, Purchases, Cash Closure
+- View weekly sales chart
+
+**File location:** `screens/DashboardScreen.kt:34`
+
+---
+
+## ProductListScreen
+
+Product catalog with search, filtering, and CRUD operations.
+
+### Signature
+
+```kotlin
+@Composable
+fun ProductListScreen(
+    navController: NavController,
+    productViewModel: ProductViewModel,
+    onMenuClick: () -> Unit = {}
+)
+```
+
+### Key Features
+
+**1. Search Functionality**
+```kotlin
+var query by rememberSaveable { mutableStateOf("") }
+
+val filteredProducts by remember(products, query) {
+    derivedStateOf {
+        val q = query.trim().lowercase()
+        if (q.isBlank()) products
+        else products.filter { p ->
+            val name = p.name.lowercase()
+            val code = p.code.lowercase()
+            val desc = p.descripcion?.lowercase().orEmpty()
+            name.contains(q) || code.contains(q) || desc.contains(q)
+        }
+    }
+}
+
+SearchField(
+    value = query,
+    onValueChange = { query = it },
+    onClear = { query = "" },
+    placeholder = "Buscar por nombre, código o descripción"
+)
+```
+
+**2. Product Cards**
+```kotlin
+LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    items(filteredProducts) { product ->
+        ProductCard(
+            product = product,
+            onDelete = { productViewModel.deleteProduct(product) },
+            onEdit = { navController.navigate("product_registration/${product.id}") }
+        )
+    }
+}
+```
+
+**3. Stock Badge**
+```kotlin
+@Composable
+private fun StockBadge(stock: Int) {
+    val (bg, fg) = when {
+        stock == 0 -> ErrorColor to Color.White
+        stock < 10 -> WarningColor to Color.White
+        else -> PrimaryGreen to Color.White
+    }
+    Surface(color = bg, shape = MaterialTheme.shapes.small) {
+        Text(
+            text = when {
+                stock == 0 -> "Sin Stock"
+                stock < 10 -> "Stock Bajo"
+                else -> "Disponible"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = fg
+        )
+    }
+}
+```
+
+### User Interactions
+
+- Search products by name, code, or description
+- Edit product details
+- Delete products
+- Navigate to product registration
+- View stock status with color-coded badges
+
+**File location:** `screens/ProductListScreen.kt:40`
+
+---
+
+## ProductRegistrationScreen
+
+Form for creating and editing products with category management.
+
+### Signature
+
+```kotlin
+@Composable
+fun ProductRegistrationScreen(
+    navController: NavController,
+    productViewModel: ProductViewModel,
+    categoryViewModel: CategoryViewModel,
+    product: Product? = null,
+    onMenuClick: () -> Unit
+)
+```
+
+### Key Features
+
+**1. Form Fields**
+```kotlin
+var nombre by remember { mutableStateOf(product?.name ?: "") }
+var codigo by remember { mutableStateOf(product?.code ?: "") }
+var precioTxt by remember { mutableStateOf(product?.price?.toString() ?: "") }
+var stockTxt by remember { mutableStateOf(product?.stock?.toString() ?: "") }
+var descripcion by remember { mutableStateOf(product?.descripcion ?: "") }
+var categoriaNombre by rememberSaveable { mutableStateOf("") }
+```
+
+**2. Category Selector with Auto-complete**
+```kotlin
+ExposedDropdownMenuBox(
+    expanded = catExpanded,
+    onExpandedChange = { catExpanded = !catExpanded }
+) {
+    OutlinedTextField(
+        value = categoriaNombre,
+        onValueChange = { categoriaNombre = it },
+        modifier = Modifier.menuAnchor().fillMaxWidth(),
+        label = { Text("Selecciona o escribe…") },
+        trailingIcon = {
+            ExposedDropdownMenuDefaults.TrailingIcon(expanded = catExpanded)
+        }
+    )
+
+    ExposedDropdownMenu(
+        expanded = catExpanded,
+        onDismissRequest = { catExpanded = false }
+    ) {
+        categories.forEach { c ->
+            DropdownMenuItem(
+                text = { Text(c.nombre) },
+                onClick = {
+                    categoriaNombre = c.nombre
+                    catExpanded = false
+                }
+            )
+        }
+    }
+}
+```
+
+**3. Category Manager Dialog**
+```kotlin
+CategoryManagerDialog(
+    show = showCatManager,
+    onDismiss = { showCatManager = false },
+    categoryViewModel = categoryViewModel
+)
+```
+
+**4. Save Product**
+```kotlin
+PrimaryButton(
+    text = "Guardar Producto",
+    onClick = {
+        val p = Product(
+            name = nombre.trim(),
+            code = codigo.trim().uppercase(),
+            price = precio!!,
+            stock = stock!!,
+            descripcion = descripcion.trim(),
+            categoryId = catId
+        )
+        productoDao.upsertByCode(p)
+        navController.navigateUp()
+    }
+)
+```
+
+### User Interactions
+
+- Create new products
+- Edit existing products
+- Select or create categories
+- Manage categories (CRUD)
+- Input validation for price and stock
+- Navigate back on save/cancel
+
+**File location:** `screens/ProductRegistrationScreen.kt:40`
+
+---
+
+## SalesScreen
+
+POS (Point of Sale) screen for registering sales with shopping cart.
+
+### Signature
+
+```kotlin
+@Composable
+fun SalesScreen(
+    navController: NavController,
+    vm: SalesViewModel,
+    onMenuClick: () -> Unit
+)
+```
+
+### Key Features
+
+**1. Product Search & Add**
+```kotlin
+ExposedDropdownMenuBox(
+    expanded = menuExpanded,
+    onExpandedChange = { menuExpanded = !menuExpanded }
+) {
+    OutlinedTextField(
+        value = productQuery,
+        onValueChange = {
+            productQuery = it
+            menuExpanded = true
+        },
+        label = { Text("Producto") },
+        placeholder = { Text("Selecciona o escribe…") },
+        modifier = Modifier.menuAnchor().fillMaxWidth()
+    )
+
+    ExposedDropdownMenu(
+        expanded = menuExpanded,
+        onDismissRequest = { menuExpanded = false }
+    ) {
+        filtered.forEach { p ->
+            DropdownMenuItem(
+                text = { Text("${p.name}  —  ${p.code}") },
+                onClick = {
+                    code = p.code
+                    productQuery = p.name
+                    menuExpanded = false
+                }
+            )
+        }
+    }
+}
+```
+
+**2. Cart Display**
+```kotlin
+LazyColumn(
+    modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
+    verticalArrangement = Arrangement.spacedBy(8.dp)
+) {
+    items(cart, key = { it.product.id }) { line ->
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(line.product.name)
+                Text("${line.qty} × S/ ${fmt(line.product.price)}")
+            }
+            Row {
+                Text("S/ ${fmt(line.product.price * line.qty)}")
+                IconButton(onClick = { vm.remove(line.product.id) }) {
+                    Icon(Icons.Default.Delete, "Quitar")
+                }
+            }
+        }
+    }
+}
+```
+
+**3. Summary & Actions**
+```kotlin
+val subtotal = cart.sumOf { it.product.price * it.qty }
+val igv = subtotal * 0.18
+
+Column {
+    SummaryRow("Productos", cart.size.toString())
+    SummaryRow("Unidades", cart.sumOf { it.qty }.toString())
+    Divider()
+    SummaryRow("Subtotal", "S/ ${fmt(subtotal)}")
+    SummaryRow("IGV (18%)", "S/ ${fmt(igv)}")
+    Divider()
+    SummaryRow("Total", "S/ ${fmt(total)}")
+    
+    Row {
+        OutlinedButton(onClick = { vm.clearCart() }) {
+            Text("Cancelar")
+        }
+        Button(
+            onClick = { vm.finalizeSale() },
+            enabled = cart.isNotEmpty()
+        ) {
+            Icon(Icons.Default.Check, null)
+            Text("Registrar Venta")
+        }
+    }
+}
+```
+
+**4. Responsive Layout**
+```kotlin
+BoxWithConstraints(Modifier.fillMaxSize()) {
+    val isWide = maxWidth >= 600.dp
+
+    if (isWide) {
+        Row {
+            Column(Modifier.weight(2f)) { leftPane() }
+            Column(Modifier.weight(1f)) { rightPane() }
+        }
+    } else {
+        Column {
+            leftPane()
+            rightPane()
+        }
+    }
+}
+```
+
+### User Interactions
+
+- Search and select products
+- Add products by code or name
+- Adjust quantities
+- Remove items from cart
+- View real-time total with IGV
+- Clear cart
+- Finalize sale transaction
+
+**File location:** `screens/SalesScreen.kt:36`
+
+---
+
+## PurchasesScreen
+
+Inventory purchase registration with supplier selection and draft cart.
+
+### Signature
+
+```kotlin
+@Composable
+fun PurchasesScreen(
+    navController: NavController,
+    purchasesVM: PurchasesViewModel,
+    onMenuClick: () -> Unit
+)
+```
+
+### Key Features
+
+**1. Supplier Selection**
+```kotlin
+val suppliers by purchasesVM.suppliers.collectAsState(initial = emptyList())
+var selectedSupplierIdx by remember { mutableStateOf(-1) }
+val selectedSupplier = suppliers.getOrNull(selectedSupplierIdx)
+
+ExposedDropdownMenuBox(
+    expanded = expanded,
+    onExpandedChange = { expanded = !expanded }
+) {
+    OutlinedTextField(
+        value = selectedSupplier?.nombre ?: "",
+        onValueChange = {},
+        readOnly = true,
+        label = { Text("Selecciona un proveedor") }
+    )
+
+    ExposedDropdownMenu(
+        expanded = expanded,
+        onDismissRequest = { expanded = false }
+    ) {
+        suppliers.forEachIndexed { index, s ->
+            DropdownMenuItem(
+                text = { Text("${s.nombre}  —  ${s.ruc}") },
+                onClick = {
+                    selectedSupplierIdx = index
+                    expanded = false
+                }
+            )
+        }
+    }
+}
+```
+
+**2. Draft Cart (Create Products On-The-Fly)**
+```kotlin
+Button(
+    onClick = {
+        val q = qtyTxt.toIntOrNull() ?: 0
+        val c = costTxt.replace(',', '.').toDoubleOrNull() ?: -1.0
+        
+        when {
+            nameOrCode.isBlank() ->
+                scope.launch { snackbar.showSnackbar("Ingresa el nombre o código") }
+            q <= 0 ->
+                scope.launch { snackbar.showSnackbar("Cantidad inválida") }
+            c < 0.0 ->
+                scope.launch { snackbar.showSnackbar("Costo inválido") }
+            else -> {
+                purchasesVM.addDraftLine(nameOrCode, q, c)
+                nameOrCode = ""
+                qtyTxt = "1"
+                costTxt = ""
+            }
+        }
+    }
+) {
+    Icon(Icons.Default.Add, null)
+    Text("Agregar")
+}
+```
+
+**3. Finalize Purchase**
+```kotlin
+Button(
+    onClick = {
+        val supplier = selectedSupplier
+        when {
+            supplier == null ->
+                scope.launch { snackbar.showSnackbar("Selecciona un proveedor") }
+            cart.isEmpty() ->
+                scope.launch { snackbar.showSnackbar("Agrega al menos un producto") }
+            else -> {
+                purchasesVM.finalizeDraftPurchase(supplier.id)
+                navController.popBackStack()
+            }
+        }
+    },
+    enabled = cart.isNotEmpty()
+) {
+    Icon(Icons.Default.Save, null)
+    Text("Registrar compra")
+}
+```
+
+**4. Supplier Manager Dialog**
+```kotlin
+if (showSupplierManager) {
+    SupplierManagerDialog(
+        onDismiss = { showSupplierManager = false },
+        onSave = { ruc, nombre, telefono ->
+            purchasesVM.upsertSupplierByRuc(ruc, nombre, telefono)
+        }
+    )
+}
+```
+
+### User Interactions
+
+- Select supplier from dropdown
+- Add products (existing or new)
+- Create products on-the-fly during purchase
+- Manage suppliers (create/edit)
+- View draft cart with totals
+- Register complete purchase
+
+**File location:** `screens/PurchasesScreen.kt:26`
+
+---
+
+## CashClosureScreen
+
+Daily cash closure with financial summary and CSV export.
+
+### Signature
+
+```kotlin
+@Composable
+fun CashClosureScreen(
+    navController: NavController,
+    vm: CashClosureViewModel,
+    onMenuClick: () -> Unit
+)
+```
+
+### Key Features
+
+**1. Metric Cards**
+```kotlin
+MetricCardRow(
+    badge = "Hoy",
+    title = "Total Ventas",
+    subtitle = "Ingresos del día",
+    value = money(salesTotal),
+    trailingIcon = Icons.Default.TrendingUp
+)
+
+MetricCardRow(
+    badge = "Hoy",
+    title = "Ganancia Neta",
+    subtitle = "${percent(netIncome, salesTotal)} margen",
+    value = money(netIncome),
+    trailingIcon = Icons.Default.AttachMoney
+)
+```
+
+**2. Generate CSV Report**
+```kotlin
+Button(
+    onClick = {
+        vm.generateReport(context) { uri ->
+            if (uri != null) {
+                val intent = android.content.Intent().apply {
+                    action = android.content.Intent.ACTION_SEND
+                    type = "text/csv"
+                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(
+                    android.content.Intent.createChooser(intent, "Compartir reporte")
+                )
+            } else {
+                Toast.makeText(context, "Error generando reporte", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+) {
+    Icon(Icons.Default.Download, null)
+    Text("Generar Reporte")
+}
+```
+
+**3. Reset Day**
+```kotlin
+var isResetting by remember { mutableStateOf(false) }
+
+OutlinedButton(
+    onClick = {
+        isResetting = true
+        vm.resetDay { isResetting = false }
+    }
+) {
+    if (isResetting) {
+        CircularProgressIndicator(modifier = Modifier.size(20.dp))
+        Text("Reiniciando...")
+    } else {
+        Icon(Icons.Default.Refresh, null)
+        Text("Reiniciar Día")
+    }
+}
+```
+
+### User Interactions
+
+- View daily sales/purchases totals
+- View net income and margins
+- See average ticket value
+- Generate and share CSV report
+- Reset day (clear transactions)
+
+**File location:** `screens/CashClosureScreen.kt:37`
+
+---
+
+## ProfileScreen
+
+User profile and settings with theme toggle.
+
+### Signature
+
+```kotlin
+@Composable
+fun ProfileScreen(
+    navController: NavController,
+    onMenuClick: () -> Unit,
+    themeManager: ThemeManager
+)
+```
+
+### Key Features
+
+**1. Theme Toggle**
+```kotlin
+val isDarkTheme by themeManager.isDarkTheme.collectAsState()
+
+ThemeSettingItem(
+    isDarkTheme = isDarkTheme,
+    onThemeToggle = { themeManager.toggleTheme() }
+)
+
+@Composable
+private fun ThemeSettingItem(
+    isDarkTheme: Boolean,
+    onThemeToggle: () -> Unit
+) {
+    Row {
+        Column(Modifier.weight(1f)) {
+            Text("Tema")
+            Text(
+                text = if (isDarkTheme) "Modo oscuro activado"
+                       else "Modo claro activado"
+            )
+        }
+        Switch(
+            checked = isDarkTheme,
+            onCheckedChange = { onThemeToggle() }
+        )
+    }
+}
+```
+
+**2. Editable Profile Header**
+```kotlin
+var editing by remember { mutableStateOf(false) }
+var name by remember { mutableStateOf("Juan Pérez") }
+var role by remember { mutableStateOf("Administrador") }
+var email by remember { mutableStateOf("juan.perez@example.com") }
+
+if (editing) {
+    TextField(value = name, onValueChange = { name = it })
+    TextField(value = role, onValueChange = { role = it })
+    TextField(value = email, onValueChange = { email = it })
+} else {
+    Text(text = name, style = MaterialTheme.typography.headlineMedium)
+    Text(text = role)
+    Text(text = email)
+}
+
+OutlinedButton(onClick = { editing = !editing }) {
+    Icon(if (editing) Icons.Default.Check else Icons.Default.Edit, null)
+    Text(if (editing) "Guardar" else "Editar")
+}
+```
+
+**3. Logout**
+```kotlin
+Button(
+    onClick = {
+        navController.navigate("login") {
+            popUpTo("profile") { inclusive = true }
+        }
+    },
+    colors = buttonColors(containerColor = MaterialTheme.colorScheme.error)
+) {
+    Icon(Icons.Default.Logout, null)
+    Text("Cerrar Sesión")
+}
+```
+
+### User Interactions
+
+- Edit profile information
+- Edit store information
+- Toggle dark/light theme
+- Access settings
+- Logout
+
+**File location:** `screens/ProfileScreen.kt:25`
+
+---
+
+## LoginScreen
+
+Authentication screen with password management.
+
+### Signature
+
+```kotlin
+@Composable
+fun LoginScreen(navController: NavController)
+```
+
+### Key Features
+
+**1. Animated Gradient Background**
+```kotlin
+val infiniteTransition = rememberInfiniteTransition(label = "logo")
+val scale by infiniteTransition.animateFloat(
+    initialValue = 1f,
+    targetValue = 1.1f,
+    animationSpec = infiniteRepeatable(
+        animation = tween(2000, easing = FastOutSlowInEasing),
+        repeatMode = RepeatMode.Reverse
+    )
+)
+
+Box(
+    modifier = Modifier
+        .fillMaxSize()
+        .background(
+            brush = Brush.verticalGradient(
+                colors = listOf(gradientStart, gradientEnd)
+            )
+        )
+)
+```
+
+**2. Login Validation**
+```kotlin
+Button(
+    onClick = {
+        if (username.isEmpty() || password.isEmpty()) {
+            errorMessage = "Por favor completa todos los campos"
+            return@Button
+        }
+
+        isLoading = true
+        scope.launch {
+            delay(800) // Simulate loading
+            val savedPassword = passwordManager.getPassword()
+            if (username == "admin" && password == savedPassword) {
+                navController.navigate("dashboard") {
+                    popUpTo("login") { inclusive = true }
+                }
+            } else {
+                errorMessage = "Usuario o contraseña incorrectos"
+                isLoading = false
+            }
+        }
+    }
+) {
+    if (isLoading) {
+        CircularProgressIndicator(color = Color.White)
+    } else {
+        Text("Ingresar")
+        Icon(Icons.Default.ArrowForward, null)
+    }
+}
+```
+
+**3. Change Password Dialog**
+```kotlin
+ChangePasswordDialog(
+    passwordManager = passwordManager,
+    onDismiss = { showChangePassword = false },
+    primaryColor = primaryColor,
+    errorColor = errorColor,
+    successColor = successColor
+)
+```
+
+### User Interactions
+
+- Enter credentials (default: admin/1234)
+- Toggle password visibility
+- Change admin password
+- Animated loading state
+- Error feedback
+
+**File location:** `screens/LoginScreen.kt:48`
+
+---
+
+## Navigation Integration
+
+All screens integrate with Jetpack Navigation Compose:
+
+```kotlin
+NavHost(navController, startDestination = "login") {
+    composable("login") {
+        LoginScreen(navController)
+    }
+    composable("dashboard") {
+        DashboardScreen(navController, productVM, salesVM, dashboardVM, onMenuClick)
+    }
+    composable("products") {
+        ProductListScreen(navController, productVM, onMenuClick)
+    }
+    composable("product_registration/{productId}") { backStackEntry ->
+        val productId = backStackEntry.arguments?.getString("productId")?.toIntOrNull()
+        val product = products.find { it.id == productId }
+        ProductRegistrationScreen(navController, productVM, categoryVM, product, onMenuClick)
+    }
+    composable("sales") {
+        SalesScreen(navController, salesVM, onMenuClick)
+    }
+    composable("purchases") {
+        PurchasesScreen(navController, purchasesVM, onMenuClick)
+    }
+    composable("cash_closure") {
+        CashClosureScreen(navController, cashClosureVM, onMenuClick)
+    }
+    composable("profile") {
+        ProfileScreen(navController, onMenuClick, themeManager)
+    }
+}
+```
+
+**File location:** `screens/MainNavigation.kt`
+
+---
+
+## Related Documentation
+
+<CardGroup cols={3}>
+  <Card title="ViewModels" icon="layer-group" href="/api/viewmodels">
+    State management logic
+  </Card>
+  
+  <Card title="Components" icon="puzzle-piece" href="/api/components">
+    Reusable UI components
+  </Card>
+  
+  <Card title="Theme" icon="palette" href="/guides/theming">
+    Material Design 3 theming
+  </Card>
+</CardGroup>

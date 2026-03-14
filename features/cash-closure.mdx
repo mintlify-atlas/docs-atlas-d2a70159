@@ -1,0 +1,572 @@
+---
+title: "Cash Closure"
+description: "Daily reports and financial summaries"
+---
+
+Cash Closure (Cierre de Caja) provides end-of-day financial summaries, calculating total sales, purchases, net profit, and generating exportable CSV reports for accounting.
+
+## Overview
+
+The Cash Closure screen helps store owners:
+- **Track daily revenue** from sales
+- **Monitor expenses** from purchases
+- **Calculate net profit** (sales - purchases)
+- **View key metrics** like average ticket and profit margin
+- **Export reports** as CSV for accounting software
+- **Reset daily data** to start fresh (with caution)
+
+## Architecture
+
+CashClosureViewModel aggregates data from multiple DAOs:
+
+```kotlin
+// CashClosureViewModel.kt:17
+class CashClosureViewModel(
+    private val saleDao: SaleDao,
+    private val movementDao: MovementDao,
+    private val purchaseDao: PurchaseDao,
+) : ViewModel() {
+
+    val salesTotal: StateFlow<Double> =
+        saleDao.todaySalesTotal().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0.0)
+
+    val salesCount: StateFlow<Int> =
+        saleDao.todaySalesCount().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    val purchasesTotal: StateFlow<Double> =
+        purchaseDao.todayPurchasesTotal().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0.0)
+
+    val netIncome: StateFlow<Double> =
+        combine(salesTotal, purchasesTotal) { s, p -> s - p }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0.0)
+
+    val avgTicket: StateFlow<Double> =
+        combine(salesTotal, salesCount) { s, c -> if (c <= 0) 0.0 else s / c }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0.0)
+
+    val movementsToday: StateFlow<List<MovimientoInventario>> =
+        movementDao.todayMovements()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+}
+```
+
+### Reactive Calculations
+
+<CardGroup cols={3}>
+  <Card title="Sales Total" icon="dollar-sign">
+    Sum of all sale totals for today from `saleDao.todaySalesTotal()`
+  </Card>
+  <Card title="Purchases Total" icon="shopping-bag">
+    Sum of all purchase costs for today from `purchaseDao.todayPurchasesTotal()`
+  </Card>
+  <Card title="Net Income" icon="chart-line">
+    Calculated as `salesTotal - purchasesTotal` using `combine`
+  </Card>
+</CardGroup>
+
+## Metric Cards
+
+The screen displays four primary metric cards:
+
+```kotlin
+// CashClosureScreen.kt:59
+MetricCardRow(
+    badge = "Hoy",
+    title = "Total Ventas",
+    subtitle = "Ingresos del día",
+    value = money(salesTotal),
+    trailingIcon = Icons.Default.TrendingUp
+)
+
+MetricCardRow(
+    badge = "Hoy",
+    title = "Total Compras",
+    subtitle = "Egresos del día",
+    value = money(purchasesTotal),
+    trailingIcon = Icons.Default.TrendingDown
+)
+
+MetricCardRow(
+    badge = "Hoy",
+    title = "Ganancia Neta",
+    subtitle = "${percent(netIncome, salesTotal)} margen",
+    value = money(netIncome),
+    trailingIcon = Icons.Default.AttachMoney
+)
+
+MetricCardRow(
+    badge = "Hoy",
+    title = "Transacciones",
+    subtitle = "Ventas realizadas",
+    value = salesCount.toString(),
+    trailingIcon = Icons.Default.ShoppingCart
+)
+```
+
+### MetricCardRow Component
+
+Stylized cards matching the dashboard design:
+
+```kotlin
+// CashClosureScreen.kt:196
+@Composable
+private fun MetricCardRow(
+    badge: String,
+    title: String,
+    subtitle: String,
+    value: String,
+    trailingIcon: ImageVector
+) {
+    AppCard(Modifier.fillMaxWidth().clickable { }) {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Text(badge, style = MaterialTheme.typography.labelSmall, color = SecondaryText)
+            Spacer(Modifier.height(4.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleSmall)
+                    Text(subtitle, style = MaterialTheme.typography.labelMedium, color = SecondaryText)
+                }
+                Box(
+                    modifier = Modifier.size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(PrimaryGreen.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(trailingIcon, null, tint = PrimaryGreen)
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(value, style = MaterialTheme.typography.titleLarge)
+        }
+    }
+}
+```
+
+## Detailed Summary Section
+
+```kotlin
+// CashClosureScreen.kt:92
+AppCard(Modifier.fillMaxWidth()) {
+    Column(Modifier.fillMaxWidth().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+
+        Text("Resumen Detallado", style = MaterialTheme.typography.titleMedium)
+
+        SummaryItem(
+            title = "Total de Ingresos",
+            hint = "Por ventas realizadas",
+            value = money(salesTotal),
+            positive = true
+        )
+
+        SummaryItem(
+            title = "Total de Egresos",
+            hint = "Por compras de inventario",
+            value = money(purchasesTotal),
+            positive = false
+        )
+
+        Divider()
+
+        SummaryBig(
+            title = "Ganancia Neta del Día",
+            hint = "Ingresos - Egresos",
+            value = money(netIncome)
+        )
+
+        SummarySmall("Ticket Promedio", money(avgTicket))
+        SummarySmall("Margen de Ganancia", percent(netIncome, salesTotal))
+    }
+}
+```
+
+### Summary Components
+
+<Tabs>
+  <Tab title="SummaryItem">
+    ```kotlin
+    // CashClosureScreen.kt:236
+    @Composable
+    private fun SummaryItem(title: String, hint: String, value: String, positive: Boolean) {
+        AppCard(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().padding(10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            if (positive) Icons.Default.TrendingUp else Icons.Default.TrendingDown,
+                            null, tint = if (positive) PrimaryGreen else MaterialTheme.colorScheme.error
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(title, style = MaterialTheme.typography.titleSmall)
+                    }
+                    Text(hint, style = MaterialTheme.typography.labelSmall, color = SecondaryText)
+                }
+                Text(value, style = MaterialTheme.typography.titleMedium)
+            }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab title="SummaryBig">
+    ```kotlin
+    // CashClosureScreen.kt:260
+    @Composable
+    private fun SummaryBig(title: String, hint: String, value: String) {
+        AppCard(Modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(hint, style = MaterialTheme.typography.labelSmall, color = SecondaryText)
+                Spacer(Modifier.height(6.dp))
+                Text(value, style = MaterialTheme.typography.titleLarge)
+            }
+        }
+    }
+    ```
+  </Tab>
+
+  <Tab title="SummarySmall">
+    ```kotlin
+    // CashClosureScreen.kt:272
+    @Composable
+    private fun SummarySmall(title: String, value: String) {
+        AppCard(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth().padding(10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(title, style = MaterialTheme.typography.bodyMedium)
+                Text(value, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Calculated Metrics
+
+### Average Ticket
+
+Average sale amount per transaction:
+
+```kotlin
+// CashClosureViewModel.kt:36
+val avgTicket: StateFlow<Double> =
+    combine(salesTotal, salesCount) { s, c -> if (c <= 0) 0.0 else s / c }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0.0)
+```
+
+<Info>
+  **Formula**: `Average Ticket = Total Sales / Number of Transactions`
+  
+  If no sales occurred today, returns `0.0` to avoid division by zero.
+</Info>
+
+### Profit Margin
+
+Percentage of sales revenue that is profit:
+
+```kotlin
+// CashClosureScreen.kt:303
+private fun percent(net: Double, sales: Double): String =
+    if (sales <= 0.0) "0.0% margen"
+    else String.format(Locale.getDefault(),"%.1f%% margen", (net / sales) * 100.0)
+```
+
+<Info>
+  **Formula**: `Profit Margin = (Net Income / Total Sales) × 100%`
+  
+  Example: If sales = S/ 1000 and net income = S/ 250, margin = 25.0%
+</Info>
+
+## CSV Report Generation
+
+Export daily data to CSV for external accounting:
+
+```kotlin
+// CashClosureScreen.kt:132
+Button(
+    onClick = {
+        vm.generateReport(context) { uri ->
+            if (uri != null) {
+                val intent = android.content.Intent().apply {
+                    action = android.content.Intent.ACTION_SEND
+                    type = "text/csv"
+                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(
+                    android.content.Intent.createChooser(intent, "Compartir reporte")
+                )
+            } else {
+                Toast.makeText(context, "Error generando reporte", Toast.LENGTH_SHORT).show()
+            }
+        }
+    },
+    modifier = Modifier.fillMaxWidth().height(48.dp)
+) {
+    Icon(Icons.Default.Download, null)
+    Spacer(Modifier.width(8.dp))
+    Text("Generar Reporte")
+}
+```
+
+### ViewModel Report Logic
+
+```kotlin
+// CashClosureViewModel.kt:51
+fun generateReport(context: Context, onDone: (Uri?) -> Unit) = viewModelScope.launch {
+    try {
+        val fileName = "reporte_cierre.csv"
+        val file = File(context.cacheDir, fileName)
+
+        val csvHeader = "Concepto,Valor\n"
+
+        val csvData = buildString {
+            append("Total Ventas,${salesTotal.value}\n")
+            append("Total Compras,${purchasesTotal.value}\n")
+            append("Ganancia Neta,${netIncome.value}\n")
+            append("Cantidad de Ventas,${salesCount.value}\n")
+            append("Ticket Promedio,${avgTicket.value}\n")
+            append("Movimientos,${movementsToday.value}\n")
+        }
+
+        FileOutputStream(file).use { it.write((csvHeader + csvData).toByteArray()) }
+
+        val uri: Uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+
+        onDone(uri)
+    } catch (e: Exception) {
+        e.printStackTrace()
+        onDone(null)
+    }
+}
+```
+
+<Steps>
+  <Step title="Create CSV File">
+    Generate `reporte_cierre.csv` in the app's cache directory
+  </Step>
+
+  <Step title="Write Data">
+    Format metrics as CSV rows: "Concepto,Valor"
+  </Step>
+
+  <Step title="Generate URI">
+    Use FileProvider to create a shareable content URI
+  </Step>
+
+  <Step title="Share Intent">
+    Open Android share sheet for sending via email, cloud storage, etc.
+  </Step>
+</Steps>
+
+### CSV Format
+
+```csv
+Concepto,Valor
+Total Ventas,12500.50
+Total Compras,7800.25
+Ganancia Neta,4700.25
+Cantidad de Ventas,48
+Ticket Promedio,260.43
+Movimientos,[MovimientoInventario(...)]
+```
+
+<Warning>
+  The CSV currently includes a `Movimientos` row that dumps the entire movement list. You may want to format this data better or export movements to a separate sheet.
+</Warning>
+
+## Day Reset Functionality
+
+<Warning>
+  **Destructive Operation**: Resetting the day **permanently deletes** today's sales, purchases, and inventory movements. This cannot be undone.
+</Warning>
+
+### Reset Button
+
+```kotlin
+// CashClosureScreen.kt:160
+var isResetting by remember { mutableStateOf(false) }
+
+OutlinedButton(
+    onClick = {
+        isResetting = true
+        vm.resetDay {
+            isResetting = false
+        }
+    },
+    modifier = Modifier.fillMaxWidth().height(48.dp)
+) {
+    if (isResetting) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(20.dp),
+            color = PrimaryGreen,
+            strokeWidth = 2.dp
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text("Reiniciando...")
+    } else {
+        Icon(Icons.Default.Refresh, null)
+        Spacer(Modifier.width(8.dp))
+        Text("Reiniciar Día")
+    }
+}
+```
+
+### ViewModel Reset Logic
+
+```kotlin
+// CashClosureViewModel.kt:44
+fun resetDay(onDone: () -> Unit) = viewModelScope.launch {
+    saleDao.deleteTodaySales()
+    purchaseDao.deleteTodayPurchases()
+    movementDao.deleteTodayMovements()
+    onDone()
+}
+```
+
+<Steps>
+  <Step title="Delete Today's Sales">
+    Remove all sale records created today
+  </Step>
+
+  <Step title="Delete Today's Purchases">
+    Remove all purchase records created today
+  </Step>
+
+  <Step title="Delete Today's Movements">
+    Remove all inventory movement logs created today
+  </Step>
+
+  <Step title="Callback">
+    Trigger `onDone()` to hide loading spinner
+  </Step>
+</Steps>
+
+### Warning Note
+
+```kotlin
+// CashClosureScreen.kt:288
+@Composable
+private fun WarningNote() {
+    Surface(
+        color = MaterialTheme.colorScheme.error.copy(alpha = 0.06f),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Text(
+            "Importante: Antes de reiniciar el día, asegúrate de generar el reporte. " +
+            "Esta acción podría eliminar o archivar registros del día según tu implementación.",
+            modifier = Modifier.padding(12.dp),
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+```
+
+<Warning>
+  Always **generate and export the report** before resetting the day. Once reset, data is permanently lost.
+</Warning>
+
+## Formatting Utilities
+
+### Money Formatting
+
+```kotlin
+// CashClosureScreen.kt:302
+private fun money(n: Double) = "S/ " + String.format(Locale.getDefault(), "%.2f", n)
+```
+
+Usage:
+```kotlin
+Text(money(1250.50))  // "S/ 1250.50"
+```
+
+### Percentage Formatting
+
+```kotlin
+// CashClosureScreen.kt:303
+private fun percent(net: Double, sales: Double): String =
+    if (sales <= 0.0) "0.0% margen"
+    else String.format(Locale.getDefault(),"%.1f%% margen", (net / sales) * 100.0)
+```
+
+Usage:
+```kotlin
+Text(percent(250.0, 1000.0))  // "25.0% margen"
+```
+
+## Movement Tracking
+
+Inventory movements are logged throughout the day:
+
+```kotlin
+// CashClosureViewModel.kt:40
+val movementsToday: StateFlow<List<MovimientoInventario>> =
+    movementDao.todayMovements()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+```
+
+Movements track:
+- **Sales** (stock deductions)
+- **Purchases** (stock additions)
+- **Manual adjustments** (if implemented)
+
+<Note>
+  Currently movements are only included in the CSV export. Consider adding a detailed movement log view in the UI for better audit trail visibility.
+</Note>
+
+## Best Practices
+
+<Info>
+  **Daily Workflow**:
+  1. Review metrics at end of day
+  2. Generate CSV report
+  3. Send report to accountant or cloud storage
+  4. Only then reset day to start fresh
+</Info>
+
+<Warning>
+  **Backup Strategy**: Implement automatic cloud backups before enabling day reset. Consider archiving data instead of deleting.
+</Warning>
+
+<Note>
+  **Time-based Queries**: All "today" queries depend on accurate device time. Ensure the device clock is set correctly.
+</Note>
+
+## Potential Enhancements
+
+<CardGroup cols={2}>
+  <Card title="Historical Reports" icon="calendar">
+    Add date range selector to view past closures instead of just today
+  </Card>
+  <Card title="Archive Instead of Delete" icon="archive">
+    Mark records as archived instead of permanently deleting on reset
+  </Card>
+  <Card title="Email Integration" icon="envelope">
+    Automatically email reports to configured address
+  </Card>
+  <Card title="Detailed Movement Log" icon="list">
+    Show expandable movement list in the UI, not just CSV
+  </Card>
+</CardGroup>
+
+## Related Components
+
+- [Dashboard](/features/dashboard) - Shows real-time metrics throughout the day
+- [Sales Management](/features/sales) - Sales contribute to daily revenue
+- [Purchase Management](/features/purchases) - Purchases count as daily expenses
+- [Product Management](/features/products) - Movements track inventory changes

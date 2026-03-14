@@ -1,0 +1,266 @@
+---
+title: Installation
+description: How to install and set up Bodeguita on your Android device or development environment
+---
+
+## System Requirements
+
+Before installing Bodeguita, ensure your system meets the following requirements:
+
+### For End Users
+
+- **Operating System**: Android 7.1 (Nougat) or higher
+- **API Level**: 25 or above
+- **Storage**: At least 50 MB of free space
+- **RAM**: Minimum 2 GB recommended
+
+### For Developers
+
+- **Android Studio**: Arctic Fox (2020.3.1) or newer
+- **JDK**: Java 17 or higher
+- **Gradle**: 8.0 or higher
+- **Kotlin**: 1.9.0 or higher
+- **Minimum SDK**: 25
+- **Target SDK**: 36
+- **Compile SDK**: 36
+
+<Warning>
+Bodeguita requires Android 7.1 (API 25) as the minimum version. Devices running older versions of Android are not supported.
+</Warning>
+
+## Installation Methods
+
+### Method 1: Install from APK (End Users)
+
+<Steps>
+  <Step title="Download the APK">
+    Download the latest Bodeguita APK file from the official release source.
+  </Step>
+  
+  <Step title="Enable Unknown Sources">
+    On your Android device, go to **Settings > Security** and enable **Install from Unknown Sources** or **Install Unknown Apps** (varies by Android version).
+    
+    <Warning>
+    Only enable this setting temporarily and disable it after installation for security purposes.
+    </Warning>
+  </Step>
+  
+  <Step title="Install the APK">
+    Locate the downloaded APK file in your device's file manager and tap it to begin installation. Follow the on-screen prompts to complete the installation.
+  </Step>
+  
+  <Step title="Launch Bodeguita">
+    Once installed, open the app from your app drawer. You'll be greeted with the login screen.
+  </Step>
+</Steps>
+
+### Method 2: Build from Source (Developers)
+
+<Steps>
+  <Step title="Clone the Repository">
+    Clone the Bodeguita repository to your local machine:
+    
+    ```bash
+    git clone <repository-url>
+    cd bodeguita
+    ```
+  </Step>
+  
+  <Step title="Open in Android Studio">
+    Launch Android Studio and select **File > Open**, then navigate to the cloned repository folder and open it.
+  </Step>
+  
+  <Step title="Sync Gradle">
+    Android Studio will automatically detect the project configuration. Wait for Gradle sync to complete. If it doesn't start automatically, click **File > Sync Project with Gradle Files**.
+  </Step>
+  
+  <Step title="Configure Build Settings">
+    Verify the build configuration in `app/build.gradle.kts`:
+    
+    ```kotlin app/build.gradle.kts
+    android {
+        namespace = "com.trabajo.minitienda"
+        compileSdk = 36
+
+        defaultConfig {
+            applicationId = "com.trabajo.minitienda"
+            minSdk = 25
+            targetSdk = 36
+            versionCode = 1
+            versionName = "1.0"
+        }
+        
+        compileOptions {
+            sourceCompatibility = JavaVersion.VERSION_17
+            targetCompatibility = JavaVersion.VERSION_17
+        }
+        
+        kotlinOptions {
+            jvmTarget = "17"
+        }
+    }
+    ```
+  </Step>
+  
+  <Step title="Install Dependencies">
+    The project will automatically download all required dependencies during Gradle sync. Key dependencies include:
+    
+    ```kotlin app/build.gradle.kts
+    dependencies {
+        // Core Android
+        implementation(libs.androidx.core.ktx)
+        implementation(libs.androidx.lifecycle.runtime.ktx)
+
+        // Jetpack Compose
+        implementation(platform(libs.androidx.compose.bom))
+        implementation(libs.androidx.compose.ui)
+        implementation(libs.androidx.compose.material3)
+        implementation(libs.androidx.compose.foundation)
+        implementation(libs.androidx.activity.compose)
+
+        // Navigation
+        implementation(libs.androidx.navigation.runtime.ktx)
+        implementation(libs.navigation.compose)
+
+        // Room Database
+        val roomVersion = "2.6.1"
+        implementation("androidx.room:room-runtime:$roomVersion")
+        implementation("androidx.room:room-ktx:$roomVersion")
+        kapt("androidx.room:room-compiler:$roomVersion")
+
+        // Vico Charts
+        implementation("com.patrykandpatryk.vico:core:1.13.0")
+        implementation("com.patrykandpatryk.vico:compose-m3:1.13.0")
+    }
+    ```
+  </Step>
+  
+  <Step title="Build the Project">
+    Build the project by selecting **Build > Make Project** or pressing `Ctrl+F9` (Windows/Linux) or `Cmd+F9` (Mac).
+  </Step>
+  
+  <Step title="Run on Device or Emulator">
+    Connect an Android device via USB with USB debugging enabled, or set up an Android emulator. Then click the **Run** button or press `Shift+F10` to install and launch Bodeguita.
+  </Step>
+</Steps>
+
+## Development Environment Setup
+
+### Configure Kotlin KAPT
+
+Bodeguita uses Kotlin Annotation Processing Tool (KAPT) for Room database code generation:
+
+```kotlin build.gradle.kts
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
+    id("org.jetbrains.kotlin.kapt")
+}
+```
+
+<Info>
+KAPT is required for Room's compile-time code generation. Without it, the database DAOs won't be properly generated.
+</Info>
+
+### Jetpack Compose Configuration
+
+Ensure Compose is properly configured:
+
+```kotlin app/build.gradle.kts
+buildFeatures {
+    compose = true
+}
+
+composeOptions {
+    kotlinCompilerExtensionVersion = "1.6.0"
+}
+```
+
+### Database Configuration
+
+The Room database is configured with the following settings:
+
+```kotlin app/src/main/java/com/trabajo/minitienda/data/database/AppDatabase.kt
+object AppDbProvider {
+    @Volatile private var INSTANCE: AppDatabase? = null
+
+    fun get(context: android.content.Context): AppDatabase =
+        INSTANCE ?: synchronized(this) {
+            androidx.room.Room.databaseBuilder(
+                context.applicationContext,
+                AppDatabase::class.java,
+                "minitienda.db"
+            )
+                .fallbackToDestructiveMigration()
+                .build()
+                .also { INSTANCE = it }
+        }
+}
+```
+
+<Note>
+The database uses `fallbackToDestructiveMigration()` which will recreate the database if schema changes are detected. This is suitable for development but should be replaced with proper migrations for production.
+</Note>
+
+## Troubleshooting
+
+### Common Installation Issues
+
+<AccordionGroup>
+  <Accordion title="App not installing on device">
+    - Ensure your device runs Android 7.1 (API 25) or higher
+    - Check that you have sufficient storage space
+    - Verify that "Install from Unknown Sources" is enabled
+    - Try uninstalling any previous version of Bodeguita
+  </Accordion>
+  
+  <Accordion title="Gradle sync failed">
+    - Verify you're using JDK 17 or higher
+    - Check your internet connection for dependency downloads
+    - Try **File > Invalidate Caches / Restart** in Android Studio
+    - Ensure Gradle wrapper is using version 8.0 or higher
+  </Accordion>
+  
+  <Accordion title="Room database errors">
+    - Make sure KAPT plugin is applied in `build.gradle.kts`
+    - Clean and rebuild the project: **Build > Clean Project** then **Build > Rebuild Project**
+    - Check that Room version is consistent across all dependencies (2.6.1)
+  </Accordion>
+  
+  <Accordion title="Compose compilation errors">
+    - Verify Kotlin compiler extension version matches your Compose version
+    - Ensure `compose = true` is set in `buildFeatures`
+    - Update to the latest stable version of Android Studio
+  </Accordion>
+</AccordionGroup>
+
+## Verification
+
+After successful installation, verify everything works correctly:
+
+<Steps>
+  <Step title="Launch the App">
+    Open Bodeguita from your app drawer or Android Studio.
+  </Step>
+  
+  <Step title="Check Login Screen">
+    You should see the login screen with username and password fields. The default credentials are:
+    - **Username**: `admin`
+    - **Password**: `1234`
+  </Step>
+  
+  <Step title="Test Database">
+    After logging in, navigate to the Products module and try adding a test product. This verifies Room database is working correctly.
+  </Step>
+</Steps>
+
+<Info>
+The default admin password can be changed from the login screen using the "Cambiar contraseña de admin" option.
+</Info>
+
+## Next Steps
+
+<Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+  Now that Bodeguita is installed, learn how to use its key features and navigate through the application.
+</Card>

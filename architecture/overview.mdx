@@ -1,0 +1,289 @@
+---
+title: Architecture Overview
+description: Understanding Bodeguita's layered architecture and how components work together
+---
+
+Bodeguita follows a clean, layered architecture based on the **MVVM (Model-View-ViewModel)** pattern with Room database for local data persistence. The app is built using **Jetpack Compose** for the UI layer and **Kotlin Coroutines & Flow** for reactive state management.
+
+## Architecture Layers
+
+The application is structured in four main layers:
+
+<Steps>
+  <Step title="Data Layer">
+    Contains Room entities, DAOs, and the database configuration. This is the source of truth for all app data.
+  </Step>
+  
+  <Step title="Repository Layer">
+    Abstracts data sources and provides clean APIs for ViewModels to access data operations.
+  </Step>
+  
+  <Step title="ViewModel Layer">
+    Manages UI state, handles business logic, and exposes reactive data streams (StateFlow/SharedFlow) to the UI.
+  </Step>
+  
+  <Step title="UI Layer (Screens)">
+    Jetpack Compose screens that observe ViewModel state and render the UI reactively.
+  </Step>
+</Steps>
+
+## Data Flow Architecture
+
+Here's how data flows through the application:
+
+```
+User Action → Screen (Composable) → ViewModel → Repository → DAO → Room Database
+                ↑                       ↓
+                └───── StateFlow/Flow ──┘
+```
+
+### Example: Product List Flow
+
+<CodeGroup>
+```kotlin Database (Entity)
+@Entity(
+    tableName = "producto",
+    indices = [
+        Index(value = ["code"], unique = true),
+        Index(value = ["category_id"])
+    ]
+)
+data class Product(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val code: String,
+    val price: Double,
+    val stock: Int,
+    val descripcion: String,
+    @ColumnInfo(name = "category_id") val categoryId: Long? = null
+)
+```
+
+```kotlin DAO
+@Dao
+interface ProductDao {
+    @Query("SELECT * FROM producto ORDER BY name ASC")
+    fun observeAllProducts(): Flow<List<Product>>
+    
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(product: Product): Long
+    
+    @Transaction
+    suspend fun upsertByCode(p: Product) {
+        val id = insertIgnore(p)
+        if (id == -1L) {
+            updateByCode(p.name, p.price, p.stock, p.descripcion, p.code)
+        }
+    }
+}
+```
+
+```kotlin Repository
+class ProductRepository(private val productDao: ProductDao) {
+    fun observeAllProducts() = productDao.observeAllProducts()
+    
+    suspend fun upsertByCode(p: Product) = productDao.upsertByCode(p)
+    
+    suspend fun deleteProduct(p: Product) = productDao.deleteProduct(p)
+    
+    suspend fun updateProduct(p: Product) = productDao.updateProduct(p)
+}
+```
+
+```kotlin ViewModel
+class ProductViewModel(private val repository: ProductRepository) : ViewModel() {
+    // Reactive state exposed to UI
+    val products: StateFlow<List<Product>> =
+        repository.observeAllProducts()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = emptyList()
+            )
+    
+    // Events channel for one-time UI actions
+    private val _events = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val events: SharedFlow<String> = _events.asSharedFlow()
+    
+    fun upsertProduct(product: Product) = viewModelScope.launch {
+        try {
+            repository.upsertByCode(product)
+            _events.tryEmit("Producto guardado")
+        } catch (e: Exception) {
+            _events.tryEmit("Error: ${e.message}")
+        }
+    }
+}
+```
+
+```kotlin Screen (Composable)
+@Composable
+fun ProductListScreen(
+    navController: NavController,
+    productViewModel: ProductViewModel,
+    onMenuClick: () -> Unit = {}
+) {
+    // Collect state from ViewModel
+    val products by productViewModel.products.collectAsState()
+    
+    PageLayout(
+        title = "Productos",
+        onMenuClick = onMenuClick
+    ) {
+        LazyColumn {
+            items(products) { product ->
+                ProductCard(
+                    product = product,
+                    onDelete = { productViewModel.deleteProduct(product) },
+                    onEdit = { navController.navigate("product_registration/${product.id}") }
+                )
+            }
+        }
+    }
+}
+```
+</CodeGroup>
+
+## Package Structure
+
+The project follows a feature-based package structure:
+
+```
+com.trabajo.minitienda/
+├── data/
+│   ├── model/          # Room entities (Product, Sale, Purchase, etc.)
+│   ├── dao/            # Database access objects
+│   └── database/       # AppDatabase configuration
+├── repository/         # Data abstraction layer
+├── viewmodel/          # Business logic and state management
+├── screens/            # Jetpack Compose UI screens
+├── ui/
+│   ├── components/     # Reusable UI components
+│   └── theme/          # Material3 theme configuration
+└── utils/              # Utilities (ThemeManager, etc.)
+```
+
+## Tech Stack
+
+<CardGroup cols={2}>
+  <Card title="UI Framework" icon="mobile">
+    **Jetpack Compose** with Material3 design system for declarative UI
+  </Card>
+  
+  <Card title="Architecture" icon="sitemap">
+    **MVVM Pattern** with clear separation of concerns across layers
+  </Card>
+  
+  <Card title="Database" icon="database">
+    **Room** with SQLite for local data persistence and reactive queries
+  </Card>
+  
+  <Card title="Async Operations" icon="rotate">
+    **Kotlin Coroutines** and **Flow/StateFlow** for reactive programming
+  </Card>
+  
+  <Card title="Navigation" icon="route">
+    **Jetpack Navigation Compose** for type-safe screen navigation
+  </Card>
+  
+  <Card title="Charts" icon="chart-line">
+    **Vico Charts** for data visualization (weekly sales activity)
+  </Card>
+</CardGroup>
+
+### Dependencies
+
+From `app/build.gradle.kts`:
+
+```kotlin
+// Core Android
+implementation(libs.androidx.core.ktx)
+implementation(libs.androidx.lifecycle.runtime.ktx)
+
+// Jetpack Compose
+implementation(platform(libs.androidx.compose.bom))
+implementation(libs.androidx.compose.ui)
+implementation(libs.androidx.compose.material3)
+implementation(libs.compose.material.icons.extended)
+implementation(libs.androidx.activity.compose)
+
+// Navigation
+implementation(libs.androidx.navigation.runtime.ktx)
+implementation(libs.navigation.compose)
+
+// Room Database
+val roomVersion = "2.6.1"
+implementation("androidx.room:room-runtime:$roomVersion")
+implementation("androidx.room:room-ktx:$roomVersion")
+kapt("androidx.room:room-compiler:$roomVersion")
+
+// Charts
+implementation("com.patrykandpatryk.vico:core:1.13.0")
+implementation("com.patrykandpatryk.vico:compose-m3:1.13.0")
+```
+
+## Application Entry Point
+
+The app starts from `MainActivity.kt`:
+
+```kotlin MainActivity.kt
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        setContent {
+            val themeManager = remember { ThemeManager(this) }
+            val isDarkTheme by themeManager.isDarkTheme.collectAsState()
+
+            MiniTiendaTheme(darkTheme = isDarkTheme) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    MainNavigation(themeManager = themeManager)
+                }
+            }
+        }
+    }
+}
+```
+
+## Key Architecture Principles
+
+<AccordionGroup>
+  <Accordion title="Single Source of Truth">
+    Room Database is the single source of truth. All data modifications go through the database, and UI observes reactive Flows from DAOs.
+  </Accordion>
+  
+  <Accordion title="Unidirectional Data Flow">
+    Data flows in one direction: User events → ViewModel → Repository → Database, and state updates flow back through reactive streams.
+  </Accordion>
+  
+  <Accordion title="Separation of Concerns">
+    Each layer has a clear responsibility:
+    - **Data Layer**: Data models and persistence
+    - **Repository**: Data access abstraction
+    - **ViewModel**: Business logic and state
+    - **UI**: Presentation and user interaction
+  </Accordion>
+  
+  <Accordion title="Reactive State Management">
+    Uses Kotlin Flow and StateFlow for reactive updates. UI automatically recomposes when state changes.
+  </Accordion>
+  
+  <Accordion title="Lifecycle Awareness">
+    ViewModels survive configuration changes. StateFlow subscriptions are lifecycle-aware with `WhileSubscribed(5_000)` strategy.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="MVVM Pattern" icon="layer-group" href="/architecture/mvvm-pattern">
+    Deep dive into MVVM implementation with real examples
+  </Card>
+  
+  <Card title="Database Schema" icon="database" href="/architecture/database">
+    Explore Room database entities, DAOs, and relationships
+  </Card>
+</CardGroup>

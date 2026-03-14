@@ -1,0 +1,464 @@
+---
+title: 'Data Models'
+description: 'Room entity definitions and data classes for the Bodeguita application'
+icon: 'database'
+---
+
+## Overview
+
+The data layer uses Room Persistence Library to define entities that map to SQLite database tables. All models are located in `data/model/` and include entities for products, sales, purchases, categories, suppliers, and inventory movements.
+
+## Core Entities
+
+### Product
+
+Represents a product in the store inventory with pricing, stock, and category information.
+
+**Location:** `data/model/Product.kt:24`
+
+```kotlin
+@Entity(
+    tableName = "producto",
+    indices = [
+        Index(value = ["code"], unique = true),
+        Index(value = ["category_id"])
+    ],
+    foreignKeys = [
+        ForeignKey(
+            entity = Category::class,
+            parentColumns = ["id"],
+            childColumns = ["category_id"],
+            onDelete = ForeignKey.SET_NULL
+        )
+    ]
+)
+data class Product(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val code: String,
+    val price: Double,
+    val stock: Int,
+    val descripcion: String,
+    @ColumnInfo(name = "category_id") val categoryId: Long? = null
+)
+```
+
+<ParamField path="id" type="Int" default="0">
+  Auto-generated primary key
+</ParamField>
+
+<ParamField path="name" type="String" required>
+  Product name
+</ParamField>
+
+<ParamField path="code" type="String" required>
+  Unique product code (SKU)
+</ParamField>
+
+<ParamField path="price" type="Double" required>
+  Sale price per unit
+</ParamField>
+
+<ParamField path="stock" type="Int" required>
+  Current inventory stock level
+</ParamField>
+
+<ParamField path="descripcion" type="String" required>
+  Product description
+</ParamField>
+
+<ParamField path="categoryId" type="Long?" default="null">
+  Foreign key reference to Category. SET_NULL on category deletion
+</ParamField>
+
+### Category
+
+Represents product categories for organization and filtering.
+
+**Location:** `data/model/Category.kt:11`
+
+```kotlin
+@Entity(
+    tableName = "categoria",
+    indices = [Index(value = ["nombre"], unique = true)]
+)
+data class Category(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val nombre: String
+)
+```
+
+<ParamField path="id" type="Long" default="0">
+  Auto-generated primary key
+</ParamField>
+
+<ParamField path="nombre" type="String" required>
+  Unique category name
+</ParamField>
+
+### Supplier
+
+Represents suppliers from whom products are purchased.
+
+**Location:** `data/model/Supplier.kt:12`
+
+```kotlin
+@Entity(
+    tableName = "proveedor",
+    indices = [
+        Index(value = ["ruc"], unique = true),
+        Index(value = ["nombre"], unique = true)
+    ]
+)
+data class Supplier(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val ruc: String,
+    val nombre: String,
+    val telefono: String? = null
+)
+```
+
+<ParamField path="id" type="Int" default="0">
+  Auto-generated primary key
+</ParamField>
+
+<ParamField path="ruc" type="String" required>
+  Unique tax identification number (RUC)
+</ParamField>
+
+<ParamField path="nombre" type="String" required>
+  Unique supplier name
+</ParamField>
+
+<ParamField path="telefono" type="String?" default="null">
+  Optional phone number
+</ParamField>
+
+## Sales Entities
+
+### Sale
+
+Represents a completed sale transaction.
+
+**Location:** `data/model/Sale.kt:6`
+
+```kotlin
+@Entity(tableName = "venta")
+data class Sale(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val fecha: Long = System.currentTimeMillis(),
+    val total: Double
+)
+```
+
+<ParamField path="id" type="Long" default="0">
+  Auto-generated primary key
+</ParamField>
+
+<ParamField path="fecha" type="Long" default="System.currentTimeMillis()">
+  Timestamp in milliseconds
+</ParamField>
+
+<ParamField path="total" type="Double" required>
+  Total sale amount
+</ParamField>
+
+### SaleDetail
+
+Represents line items in a sale with quantity and pricing.
+
+**Location:** `data/model/Sale.kt:31`
+
+```kotlin
+@Entity(
+    tableName = "detalle_venta",
+    primaryKeys = ["sale_id", "product_id"],
+    foreignKeys = [
+        ForeignKey(
+            entity = Sale::class,
+            parentColumns = ["id"],
+            childColumns = ["sale_id"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = Product::class,
+            parentColumns = ["id"],
+            childColumns = ["product_id"],
+            onDelete = ForeignKey.RESTRICT
+        )
+    ],
+    indices = [Index("product_id")]
+)
+data class SaleDetail(
+    @ColumnInfo(name = "sale_id") val saleId: Long,
+    @ColumnInfo(name = "product_id") val productId: Int,
+    val cantidad: Int,
+    @ColumnInfo(name = "precio_unit") val precioUnit: Double,
+    val subtotal: Double
+)
+```
+
+<ParamField path="saleId" type="Long" required>
+  Foreign key to Sale. CASCADE on deletion
+</ParamField>
+
+<ParamField path="productId" type="Int" required>
+  Foreign key to Product. RESTRICT on deletion (prevents deleting products with sales)
+</ParamField>
+
+<ParamField path="cantidad" type="Int" required>
+  Quantity sold
+</ParamField>
+
+<ParamField path="precioUnit" type="Double" required>
+  Unit price at time of sale
+</ParamField>
+
+<ParamField path="subtotal" type="Double" required>
+  Line total (cantidad * precioUnit)
+</ParamField>
+
+### SaleWithDetails
+
+Relationship class that combines a sale with all its detail items.
+
+**Location:** `data/model/Sale.kt:39`
+
+```kotlin
+data class SaleWithDetails(
+    @Embedded val sale: Sale,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "sale_id",
+        entity = SaleDetail::class
+    )
+    val items: List<SaleDetail>
+)
+```
+
+### DailySaleSummary
+
+Data class for daily sales aggregation.
+
+**Location:** `data/model/Sale.kt:49`
+
+```kotlin
+data class DailySaleSummary(
+    val saleDate: String,
+    val total: Double
+)
+```
+
+### SaleBrief
+
+Simplified sale data with formatted date string.
+
+**Location:** `data/model/SaleBrief.kt:6`
+
+```kotlin
+data class SaleBrief(
+    val id: Long,
+    val total: Double,
+    val fecha: Long
+) {
+    val fechaString: String
+        get() {
+            if (fecha == 0L) return "-"
+            val df = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+            return df.format(Date(fecha))
+        }
+}
+```
+
+## Purchase Entities
+
+### Purchase
+
+Represents a purchase transaction from a supplier.
+
+**Location:** `data/model/Purchase.kt:6`
+
+```kotlin
+@Entity(tableName = "compra")
+data class Purchase(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @ColumnInfo(name = "proveedor_id") val proveedorId: Int,
+    val fecha: Long = System.currentTimeMillis(),
+    val total: Double
+)
+```
+
+<ParamField path="id" type="Long" default="0">
+  Auto-generated primary key
+</ParamField>
+
+<ParamField path="proveedorId" type="Int" required>
+  Supplier ID (no foreign key constraint)
+</ParamField>
+
+<ParamField path="fecha" type="Long" default="System.currentTimeMillis()">
+  Timestamp in milliseconds
+</ParamField>
+
+<ParamField path="total" type="Double" required>
+  Total purchase amount
+</ParamField>
+
+### PurchaseDetail
+
+Represents line items in a purchase with quantity and cost.
+
+**Location:** `data/model/Purchase.kt:32`
+
+```kotlin
+@Entity(
+    tableName = "detalle_compra",
+    primaryKeys = ["purchase_id", "product_id"],
+    foreignKeys = [
+        ForeignKey(
+            entity = Purchase::class,
+            parentColumns = ["id"],
+            childColumns = ["purchase_id"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = Product::class,
+            parentColumns = ["id"],
+            childColumns = ["product_id"],
+            onDelete = ForeignKey.RESTRICT
+        )
+    ],
+    indices = [Index("product_id")]
+)
+data class PurchaseDetail(
+    @ColumnInfo(name = "purchase_id") val purchaseId: Long,
+    @ColumnInfo(name = "product_id") val productId: Int,
+    val cantidad: Int,
+    @ColumnInfo(name = "costo_unit") val costoUnit: Double,
+    val subtotal: Double = cantidad * costoUnit
+)
+```
+
+<ParamField path="purchaseId" type="Long" required>
+  Foreign key to Purchase. CASCADE on deletion
+</ParamField>
+
+<ParamField path="productId" type="Int" required>
+  Foreign key to Product. RESTRICT on deletion
+</ParamField>
+
+<ParamField path="cantidad" type="Int" required>
+  Quantity purchased
+</ParamField>
+
+<ParamField path="costoUnit" type="Double" required>
+  Unit cost at time of purchase
+</ParamField>
+
+<ParamField path="subtotal" type="Double" default="cantidad * costoUnit">
+  Line total (calculated)
+</ParamField>
+
+### PurchaseWithDetails
+
+Relationship class that combines a purchase with all its detail items.
+
+**Location:** `data/model/Purchase.kt:40`
+
+```kotlin
+data class PurchaseWithDetails(
+    @Embedded val compra: Purchase,
+    @Relation(
+        parentColumn = "id",
+        entityColumn = "purchase_id",
+        entity = PurchaseDetail::class
+    )
+    val detalles: List<PurchaseDetail>
+)
+```
+
+## Inventory Movement
+
+### MovimientoInventario
+
+Tracks inventory changes for auditing purposes.
+
+**Location:** `data/model/Movement.kt:17`
+
+```kotlin
+@Entity(
+    tableName = "movimiento_inventario",
+    indices = [Index("producto_id")],
+    foreignKeys = [
+        ForeignKey(
+            entity = Product::class,
+            parentColumns = ["id"],
+            childColumns = ["producto_id"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ]
+)
+data class MovimientoInventario(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @ColumnInfo(name = "producto_id") val productoId: Int,
+    val fecha: Long = System.currentTimeMillis(),
+    val tipo: String,  // "AJUSTE" | "COMPRA" | "VENTA"
+    val cantidad: Int
+)
+```
+
+<ParamField path="id" type="Long" default="0">
+  Auto-generated primary key
+</ParamField>
+
+<ParamField path="productoId" type="Int" required>
+  Foreign key to Product. CASCADE on deletion
+</ParamField>
+
+<ParamField path="fecha" type="Long" default="System.currentTimeMillis()">
+  Timestamp in milliseconds
+</ParamField>
+
+<ParamField path="tipo" type="String" required>
+  Movement type: "AJUSTE" (adjustment), "COMPRA" (purchase), or "VENTA" (sale)
+</ParamField>
+
+<ParamField path="cantidad" type="Int" required>
+  Quantity change (positive or negative)
+</ParamField>
+
+## Database Relationships
+
+### Foreign Key Constraints
+
+- **Product → Category**: SET_NULL (allows category deletion)
+- **SaleDetail → Sale**: CASCADE (deletes details when sale is deleted)
+- **SaleDetail → Product**: RESTRICT (prevents deleting products with sales history)
+- **PurchaseDetail → Purchase**: CASCADE (deletes details when purchase is deleted)
+- **PurchaseDetail → Product**: RESTRICT (prevents deleting products with purchase history)
+- **MovimientoInventario → Product**: CASCADE (deletes movements when product is deleted)
+
+### Unique Constraints
+
+- Product code must be unique
+- Category name must be unique
+- Supplier RUC must be unique
+- Supplier name must be unique
+
+## Best Practices
+
+<Card title="Use @Embedded and @Relation" icon="link">
+  Leverage Room's relationship annotations to load related data efficiently without manual joins
+</Card>
+
+<Card title="Foreign Key Actions" icon="shield">
+  RESTRICT prevents accidental data loss, CASCADE simplifies cleanup of dependent records
+</Card>
+
+<Card title="Timestamp Storage" icon="clock">
+  Store dates as Long (milliseconds since epoch) for timezone-independent queries
+</Card>
+
+<Card title="Computed Properties" icon="calculator">
+  Use Kotlin properties (like `SaleBrief.fechaString`) for view-layer formatting
+</Card>

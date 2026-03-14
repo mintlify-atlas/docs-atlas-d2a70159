@@ -1,0 +1,410 @@
+---
+title: 'Navigation'
+description: 'Navigate between screens using Jetpack Compose Navigation and drawer menu'
+icon: 'route'
+---
+
+Bodeguita uses Jetpack Compose Navigation with a modal drawer menu for navigating between screens. The navigation system is defined in `screens/MainNavigation.kt:71`.
+
+## Navigation Architecture
+
+The app uses a single-activity architecture with:
+
+- **NavHost** - Manages navigation graph and screen transitions
+- **NavController** - Controls navigation actions
+- **ModalNavigationDrawer** - Side drawer menu for main navigation
+- **Route-based navigation** - String-based route definitions
+
+## NavHost Setup
+
+The navigation graph is defined in `screens/MainNavigation.kt:187`:
+
+```kotlin
+@Composable
+fun MainNavigation(themeManager: ThemeManager) {
+    val navController = rememberNavController()
+    val context = LocalContext.current
+    
+    // ... database and ViewModels setup ...
+    
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = { /* drawer menu */ }
+    ) {
+        NavHost(
+            navController = navController, 
+            startDestination = "login"
+        ) {
+            composable("login") { 
+                LoginScreen(navController) 
+            }
+            composable("dashboard") { 
+                DashboardScreen(
+                    navController = navController,
+                    productViewModel = productViewModel,
+                    salesViewModel = salesViewModel,
+                    dashboardViewModel = dashboardViewModel,
+                    onMenuClick = openDrawer
+                )
+            }
+            // ... more routes ...
+        }
+    }
+}
+```
+
+## Route Definitions
+
+Bodeguita defines the following main routes:
+
+### Simple Routes
+
+```kotlin
+composable("login") { LoginScreen(navController) }
+composable("dashboard") { DashboardScreen(...) }
+composable("products") { ProductListScreen(...) }
+composable("sales") { SalesScreen(...) }
+composable("purchases") { PurchasesScreen(...) }
+composable("cash_closure") { CashClosureScreen(...) }
+composable("profile") { ProfileScreen(...) }
+```
+
+### Routes with Parameters
+
+For editing products, the app uses a parameterized route in `screens/MainNavigation.kt:205`:
+
+```kotlin
+composable(
+    route = "product_registration/{productId}",
+    arguments = listOf(
+        navArgument("productId") { 
+            type = NavType.StringType 
+        }
+    )
+) { backStackEntry ->
+    val productId = backStackEntry.arguments
+        ?.getString("productId")
+        ?.toIntOrNull()
+    
+    val products by productViewModel.products
+        .collectAsState(initial = emptyList())
+    val product = productId?.let { id -> 
+        products.find { it.id == id } 
+    }
+
+    ProductRegistrationScreen(
+        navController,
+        productViewModel,
+        categoryViewModel,
+        product,
+        onMenuClick = openDrawer
+    )
+}
+```
+
+## Drawer Menu Implementation
+
+The drawer menu is implemented in `screens/MainNavigation.kt:153` using Material 3 components.
+
+### Drawer Items
+
+```kotlin
+private data class DrawerItem(
+    val title: String,
+    val route: String,
+    val icon: ImageVector
+)
+
+val drawerItems = listOf(
+    DrawerItem("Panel", "dashboard", Icons.Default.Dashboard),
+    DrawerItem("Productos", "products", Icons.Default.Inventory),
+    DrawerItem("Ventas", "sales", Icons.Default.ShoppingCart),
+    DrawerItem("Compras", "purchases", Icons.Default.AddShoppingCart),
+    DrawerItem("Cierre", "cash_closure", Icons.Default.AccountBalance),
+    DrawerItem("Perfil", "profile", Icons.Default.Person)
+)
+```
+
+### Drawer UI
+
+```kotlin
+val drawerState = rememberDrawerState(DrawerValue.Closed)
+val scope = rememberCoroutineScope()
+val navBackStackEntry by navController.currentBackStackEntryAsState()
+val currentRoute = navBackStackEntry?.destination?.route
+
+ModalNavigationDrawer(
+    drawerState = drawerState,
+    drawerContent = {
+        ModalDrawerSheet {
+            Spacer(Modifier.height(16.dp))
+            drawerItems.forEach { item ->
+                NavigationDrawerItem(
+                    label = { Text(item.title) },
+                    icon = { Icon(item.icon, contentDescription = item.title) },
+                    selected = currentRoute == item.route,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        navController.navigate(item.route) { 
+                            launchSingleTop = true 
+                        }
+                    },
+                    modifier = Modifier.padding(
+                        NavigationDrawerItemDefaults.ItemPadding
+                    )
+                )
+            }
+        }
+    }
+) {
+    // NavHost content
+}
+```
+
+## Navigation Patterns
+
+### Opening the Drawer
+
+```kotlin
+val openDrawer: () -> Unit = { 
+    scope.launch { drawerState.open() } 
+}
+
+// Pass to screens
+DashboardScreen(
+    navController = navController,
+    onMenuClick = openDrawer
+)
+```
+
+### Simple Navigation
+
+```kotlin
+// Navigate to a screen
+navController.navigate("dashboard")
+
+// Navigate with single top (prevent duplicates)
+navController.navigate("products") {
+    launchSingleTop = true
+}
+```
+
+### Navigation with Parameters
+
+```kotlin
+// Navigate with a parameter
+val productId = 123
+navController.navigate("product_registration/$productId")
+```
+
+### Pop Back Stack
+
+```kotlin
+// Go back
+navController.popBackStack()
+
+// Go back to specific destination
+navController.popBackStack("dashboard", inclusive = false)
+```
+
+### Clear Back Stack
+
+```kotlin
+// Navigate and clear back stack
+navController.navigate("dashboard") {
+    popUpTo("login") { inclusive = true }
+    launchSingleTop = true
+}
+```
+
+## Adding New Screens
+
+<Steps>
+  <Step title="Create Screen Composable">
+    Create a new screen file in `screens/` directory:
+
+    ```kotlin
+    @Composable
+    fun SettingsScreen(
+        navController: NavController,
+        onMenuClick: () -> Unit
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Settings") },
+                    navigationIcon = {
+                        IconButton(onClick = onMenuClick) {
+                            Icon(Icons.Default.Menu, "Menu")
+                        }
+                    }
+                )
+            }
+        ) { paddingValues ->
+            // Screen content
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Add Route to NavHost">
+    Add the route in `screens/MainNavigation.kt`:
+
+    ```kotlin
+    NavHost(navController = navController, startDestination = "login") {
+        // ... existing routes ...
+        
+        composable("settings") {
+            SettingsScreen(
+                navController = navController,
+                onMenuClick = openDrawer
+            )
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Add to Drawer Menu">
+    Add a drawer item to make it accessible from the menu:
+
+    ```kotlin
+    val drawerItems = listOf(
+        // ... existing items ...
+        DrawerItem(
+            "Configuración", 
+            "settings", 
+            Icons.Default.Settings
+        )
+    )
+    ```
+  </Step>
+
+  <Step title="Navigate to New Screen">
+    Navigate from other screens:
+
+    ```kotlin
+    Button(onClick = { navController.navigate("settings") }) {
+        Text("Open Settings")
+    }
+    ```
+  </Step>
+</Steps>
+
+## Adding Screens with Parameters
+
+<Steps>
+  <Step title="Define Route with Parameter">
+    ```kotlin
+    composable(
+        route = "supplier_details/{supplierId}",
+        arguments = listOf(
+            navArgument("supplierId") { 
+                type = NavType.IntType 
+            }
+        )
+    ) { backStackEntry ->
+        val supplierId = backStackEntry.arguments
+            ?.getInt("supplierId") ?: 0
+        
+        SupplierDetailsScreen(
+            supplierId = supplierId,
+            navController = navController
+        )
+    }
+    ```
+  </Step>
+
+  <Step title="Navigate with Parameter">
+    ```kotlin
+    val supplierId = 42
+    navController.navigate("supplier_details/$supplierId")
+    ```
+  </Step>
+
+  <Step title="Handle Optional Parameters">
+    For optional parameters, use nullable types:
+
+    ```kotlin
+    composable(
+        route = "edit_product?id={productId}",
+        arguments = listOf(
+            navArgument("productId") { 
+                type = NavType.StringType
+                nullable = true
+                defaultValue = null
+            }
+        )
+    ) { backStackEntry ->
+        val productId = backStackEntry.arguments
+            ?.getString("productId")
+            ?.toIntOrNull()
+        
+        // null = new product, non-null = edit existing
+        ProductEditScreen(productId = productId)
+    }
+    ```
+  </Step>
+</Steps>
+
+## Navigation Best Practices
+
+<Card title="Use launchSingleTop" icon="layer-group">
+  Prevent duplicate screens in the back stack by using `launchSingleTop = true` for main destinations.
+</Card>
+
+<Card title="Clear Back Stack on Logout" icon="arrow-right-from-bracket">
+  When navigating to login, clear the entire back stack to prevent users from going back.
+</Card>
+
+<Card title="Handle Back Press" icon="arrow-left">
+  For critical screens, handle back press to show confirmation dialogs:
+
+  ```kotlin
+  BackHandler(enabled = hasUnsavedChanges) {
+      showDiscardDialog = true
+  }
+  ```
+</Card>
+
+<Card title="Pass ViewModels, Not Data" icon="database">
+  Pass ViewModels to screens instead of individual data. ViewModels are scoped to the navigation graph and survive configuration changes.
+</Card>
+
+<Card title="Type-Safe Navigation" icon="shield-check">
+  For complex apps, consider using type-safe navigation with the Navigation Compose library's type-safe APIs.
+</Card>
+
+## Navigation State Management
+
+### Get Current Route
+
+```kotlin
+val navBackStackEntry by navController.currentBackStackEntryAsState()
+val currentRoute = navBackStackEntry?.destination?.route
+
+when (currentRoute) {
+    "dashboard" -> { /* Dashboard is active */ }
+    "products" -> { /* Products is active */ }
+}
+```
+
+### Observe Navigation Events
+
+```kotlin
+LaunchedEffect(navController) {
+    navController.addOnDestinationChangedListener { _, destination, _ ->
+        Log.d("Navigation", "Navigated to ${destination.route}")
+    }
+}
+```
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Compose Navigation" icon="compass" href="https://developer.android.com/jetpack/compose/navigation">
+    Official Jetpack Compose Navigation guide
+  </Card>
+  <Card title="Navigation Drawer" icon="bars" href="https://developer.android.com/reference/kotlin/androidx/compose/material3/package-summary#NavigationDrawer(kotlin.Function1,androidx.compose.ui.Modifier,androidx.compose.material3.DrawerState,kotlin.Boolean,kotlin.Function1)">
+    Material 3 Navigation Drawer documentation
+  </Card>
+</CardGroup>

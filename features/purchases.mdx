@@ -1,0 +1,628 @@
+---
+title: "Purchase Management"
+description: "Track purchases from suppliers"
+---
+
+The Purchase Management module enables store owners to record inventory purchases from suppliers, with support for draft carts, on-the-fly product creation, cost tracking, and supplier management.
+
+## Overview
+
+PurchasesScreen provides:
+- **Supplier selection** with quick create dialog
+- **Draft cart** system for building purchases
+- **On-the-fly product creation** using name or code
+- **Multi-item purchases** with individual cost tracking
+- **Automatic stock updates** on purchase completion
+- **Purchase history** tracking
+
+## Key Differences from Sales
+
+<CardGroup cols={2}>
+  <Card title="Sales" icon="shopping-cart">
+    - Products must exist
+    - Prices are fixed from product
+    - Stock is **deducted**
+    - Customer is implicit
+  </Card>
+  <Card title="Purchases" icon="arrow-trend-up">
+    - Products can be created on-the-fly
+    - Costs are entered per-line
+    - Stock is **added**
+    - Supplier is required
+  </Card>
+</CardGroup>
+
+## Architecture
+
+The purchases screen integrates multiple data sources:
+
+```kotlin
+// PurchasesScreen.kt:27
+@Composable
+fun PurchasesScreen(
+    navController: NavController,
+    purchasesVM: PurchasesViewModel,
+    onMenuClick: () -> Unit
+) {
+    val suppliers by purchasesVM.suppliers.collectAsState(initial = emptyList())
+    val cart by purchasesVM.draftCart.collectAsState(initial = emptyList())
+    val total by purchasesVM.draftTotal.collectAsState(initial = 0.0)
+}
+```
+
+### Draft Cart Model
+
+Unlike sales which use existing products, purchases use a draft model:
+
+```kotlin
+// PurchasesViewModel.kt:81
+data class DraftLine(
+    val nameOrCode: String,  // Can be name, code, or mixed
+    val qty: Int,
+    val cost: Double
+)
+
+private val _draftCart = MutableStateFlow<List<DraftLine>>(emptyList())
+val draftCart: StateFlow<List<DraftLine>> = _draftCart.asStateFlow()
+
+val draftTotal: StateFlow<Double> =
+    draftCart.map { lines -> lines.sumOf { it.qty * it.cost } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0.0)
+```
+
+<Note>
+  Draft lines store **name or code** as text, not product IDs. Products are resolved or created when finalizing the purchase.
+</Note>
+
+## Supplier Selection
+
+Suppliers are required for all purchases:
+
+### Supplier Model
+
+```kotlin
+// Supplier.kt
+@Entity(
+    tableName = "proveedor",
+    indices = [
+        Index(value = ["ruc"], unique = true),
+        Index(value = ["nombre"], unique = true)
+    ]
+)
+data class Supplier(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val ruc: String,        // Tax ID (unique)
+    val nombre: String,     // Name (unique)
+    val telefono: String? = null
+)
+```
+
+### Supplier Dropdown
+
+```kotlin
+// PurchasesScreen.kt:60
+AppCard(Modifier.fillMaxWidth()) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Proveedor", style = MaterialTheme.typography.titleMedium)
+            TextButton(onClick = { showSupplierManager = true }) {
+                Text("Gestionar")
+            }
+        }
+
+        var expanded by remember { mutableStateOf(false) }
+
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = !expanded }
+        ) {
+            OutlinedTextField(
+                modifier = Modifier.menuAnchor().fillMaxWidth(),
+                value = selectedSupplier?.nombre ?: "",
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Selecciona un proveedor") },
+                trailingIcon = {
+                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                },
+                singleLine = true
+            )
+
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                suppliers.forEachIndexed { index, s ->
+                    DropdownMenuItem(
+                        text = { Text("${s.nombre}  —  ${s.ruc}") },
+                        onClick = {
+                            selectedSupplierIdx = index
+                            expanded = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+```
+
+### Quick Supplier Creation
+
+```kotlin
+// PurchasesScreen.kt:329
+@Composable
+private fun SupplierManagerDialog(
+    onDismiss: () -> Unit,
+    onSave: (ruc: String, nombre: String, telefono: String?) -> Unit
+) {
+    var ruc by remember { mutableStateOf("") }
+    var nombre by remember { mutableStateOf("") }
+    var telefono by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Gestionar Proveedor") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(value = ruc, onValueChange = { ruc = it }, label = { Text("RUC") })
+                OutlinedTextField(value = nombre, onValueChange = { nombre = it }, label = { Text("Nombre") })
+                OutlinedTextField(value = telefono, onValueChange = { telefono = it }, label = { Text("Teléfono") })
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onSave(ruc, nombre, telefono.ifBlank { null })
+                onDismiss()
+            }) { Text("Guardar") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cerrar") }
+        }
+    )
+}
+```
+
+### ViewModel Supplier Creation
+
+```kotlin
+// PurchasesViewModel.kt:62
+fun upsertSupplierByRuc(ruc: String, nombre: String, telefono: String?) = viewModelScope.launch {
+    val r = ruc.trim()
+    val n = nombre.trim()
+    val t = telefono?.trim().takeUnless { it.isNullOrBlank() }
+
+    if (r.isBlank() || n.isBlank()) {
+        _events.tryEmit("RUC y nombre son obligatorios")
+        return@launch
+    }
+
+    val id = supplierDao.insertIgnore(Supplier(ruc = r, nombre = n, telefono = t))
+    if (id == -1L) {
+        _events.tryEmit("El proveedor ya existe")
+    } else {
+        _events.tryEmit("Proveedor guardado")
+    }
+}
+```
+
+<Warning>
+  Both RUC (tax ID) and supplier name must be **unique**. Attempting to create a duplicate supplier will fail silently with `insertIgnore`.
+</Warning>
+
+## Adding Products to Purchase
+
+### Product Entry Form
+
+Supports both existing products and new entries:
+
+```kotlin
+// PurchasesScreen.kt:112
+AppCard(Modifier.fillMaxWidth()) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Agregar Productos", style = MaterialTheme.typography.titleMedium)
+
+        OutlinedTextField(
+            value = nameOrCode,
+            onValueChange = { nameOrCode = it },
+            label = { Text("Nombre o Código") },
+            leadingIcon = { Icon(Icons.Default.Inventory2, null) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii)
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            OutlinedTextField(
+                value = qtyTxt,
+                onValueChange = { qtyTxt = it },
+                label = { Text("Cantidad") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+            OutlinedTextField(
+                value = costTxt,
+                onValueChange = { costTxt = it },
+                label = { Text("Costo (S/)") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+            )
+        }
+
+        Button(
+            onClick = {
+                val q = qtyTxt.toIntOrNull() ?: 0
+                val c = costTxt.replace(',', '.').toDoubleOrNull() ?: -1.0
+                when {
+                    nameOrCode.isBlank() ->
+                        scope.launch { snackbar.showSnackbar("Ingresa el nombre o código") }
+                    q <= 0 ->
+                        scope.launch { snackbar.showSnackbar("Cantidad inválida") }
+                    c < 0.0 ->
+                        scope.launch { snackbar.showSnackbar("Costo inválido") }
+                    else -> {
+                        purchasesVM.addDraftLine(nameOrCode, q, c)
+                        nameOrCode = ""
+                        qtyTxt = "1"
+                        costTxt = ""
+                    }
+                }
+            },
+            modifier = Modifier.height(50.dp).fillMaxWidth(),
+            shape = MaterialTheme.shapes.medium
+        ) {
+            Icon(Icons.Default.Add, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Agregar")
+        }
+    }
+}
+```
+
+### Add to Draft Cart
+
+```kotlin
+// PurchasesViewModel.kt:94
+fun addDraftLine(nameOrCode: String, qty: Int, cost: Double) {
+    val n = nameOrCode.trim()
+    if (n.isBlank() || qty <= 0 || cost < 0) {
+        _events.tryEmit("Datos inválidos")
+        return
+    }
+
+    val current = _draftCart.value.toMutableList()
+    val idx = current.indexOfFirst { 
+        it.nameOrCode.equals(n, ignoreCase = true) && it.cost == cost 
+    }
+
+    if (idx >= 0) {
+        // Update existing line
+        val old = current[idx]
+        current[idx] = old.copy(qty = old.qty + qty)
+    } else {
+        // Add new line
+        current += DraftLine(n, qty, cost)
+    }
+    _draftCart.value = current
+}
+```
+
+<Info>
+  Draft lines are matched by **name/code AND cost**. This allows multiple lines with the same product at different costs (useful for bulk vs. unit pricing).
+</Info>
+
+## Draft Cart Display
+
+```kotlin
+// PurchasesScreen.kt:180
+AppCard(Modifier.fillMaxWidth()) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Productos en la Compra", style = MaterialTheme.typography.titleMedium)
+
+        if (cart.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxWidth().height(120.dp),
+                contentAlignment = Alignment.Center
+            ) { 
+                Text("El carrito está vacío", color = SecondaryText) 
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 220.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                cart.forEach { line ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = line.nameOrCode,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Text(
+                                text = "${line.qty} × S/ ${fmt(line.cost)} = S/ ${fmt(line.qty * line.cost)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SecondaryText
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                purchasesVM.removeDraftLine(line.nameOrCode, line.cost)
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Quitar",
+                                tint = ErrorColor
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+### Remove from Draft Cart
+
+```kotlin
+// PurchasesViewModel.kt:111
+fun removeDraftLine(nameOrCode: String, cost: Double) {
+    _draftCart.update { list -> 
+        list.filterNot { 
+            it.nameOrCode.equals(nameOrCode, true) && it.cost == cost 
+        } 
+    }
+}
+```
+
+## Purchase Summary
+
+```kotlin
+// PurchasesScreen.kt:238
+AppCard(Modifier.fillMaxWidth()) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SummaryRow("Productos", cart.size.toString())
+            SummaryRow("Unidades", cart.sumOf { it.qty }.toString())
+            Divider()
+            SummaryRow(
+                "Total",
+                "S/ ${fmt(total)}",
+                MaterialTheme.typography.titleMedium
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().height(60.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            OutlinedButton(
+                onClick = { purchasesVM.clearDraftCart() },
+                modifier = Modifier.weight(1f),
+                enabled = cart.isNotEmpty()
+            ) {
+                Icon(Icons.Default.Close, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Cancelar")
+            }
+
+            Button(
+                onClick = {
+                    val supplier = selectedSupplier
+                    when {
+                        supplier == null ->
+                            scope.launch { snackbar.showSnackbar("Selecciona un proveedor") }
+                        cart.isEmpty() ->
+                            scope.launch { snackbar.showSnackbar("Agrega al menos un producto") }
+                        else -> {
+                            purchasesVM.finalizeDraftPurchase(supplier.id)
+                            scope.launch { snackbar.showSnackbar("Compra registrada") }
+                            navController.popBackStack()
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f),
+                enabled = cart.isNotEmpty()
+            ) {
+                Icon(Icons.Default.Save, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Registrar compra")
+            }
+        }
+    }
+}
+```
+
+## Finalizing Purchase with Product Creation
+
+The finalization process materializes draft lines into real products:
+
+```kotlin
+// PurchasesViewModel.kt:118
+fun finalizeDraftPurchase(supplierId: Int) = viewModelScope.launch {
+    val drafts = _draftCart.value
+    if (drafts.isEmpty()) {
+        _events.tryEmit("Agrega al menos un producto")
+        return@launch
+    }
+
+    try {
+        val items = mutableListOf<PurchaseRepository.CartItem>()
+
+        for (d in drafts) {
+            val code = d.nameOrCode.trim().uppercase()
+            val name = d.nameOrCode.trim()
+
+            var p = productDao.findByCode(code)
+
+            if (p == null) {
+                // Create minimal product entry
+                productDao.insertIgnoreMinimal(
+                    code = code,
+                    name = name,
+                    price = d.cost,
+                    stock = 0,
+                    desc = ""
+                )
+                // Update name/price (idempotent)
+                productDao.updateByCode(
+                    name = name,
+                    price = d.cost,
+                    stock = 0,
+                    desc = "",
+                    code = code
+                )
+                p = productDao.findByCode(code)
+                if (p == null) {
+                    _events.tryEmit("No se pudo crear/leer el producto $name")
+                    continue
+                }
+            } else {
+                // Update existing product's price
+                productDao.updateByCode(
+                    name = p.name,
+                    price = d.cost,  // Update reference price
+                    stock = p.stock,
+                    desc = p.descripcion,
+                    code = p.code
+                )
+            }
+
+            items += PurchaseRepository.CartItem(
+                product = p,
+                qty = d.qty,
+                cost = d.cost
+            )
+        }
+
+        if (items.isEmpty()) {
+            _events.tryEmit("No hay ítems válidos para registrar")
+            return@launch
+        }
+
+        val id = repo.makePurchase(supplierId = supplierId, lines = items)
+
+        clearDraftCart()
+        _events.tryEmit("Compra registrada (#$id)")
+    } catch (e: Exception) {
+        _events.tryEmit(e.message ?: "Error al registrar compra")
+    }
+}
+```
+
+<Steps>
+  <Step title="Resolve or Create Products">
+    For each draft line:
+    - Try to find product by code
+    - If not found, create minimal product with `insertIgnoreMinimal`
+    - Update product's reference price to purchase cost
+  </Step>
+
+  <Step title="Build Real Cart Items">
+    Convert draft lines to `PurchaseRepository.CartItem` with resolved products
+  </Step>
+
+  <Step title="Persist Purchase">
+    Call repository's `makePurchase` which:
+    - Inserts purchase master record
+    - Inserts purchase detail lines
+    - Updates product stock (adds quantities)
+    - Records inventory movements
+  </Step>
+
+  <Step title="Clear Draft and Navigate">
+    Empty the draft cart and show success message
+  </Step>
+</Steps>
+
+<Warning>
+  **Product Auto-creation**: When a draft line's code doesn't match an existing product, a new product is created automatically. This is powerful but can lead to duplicate products if codes aren't standardized.
+</Warning>
+
+<Info>
+  **Price Updates**: When purchasing an existing product, its reference price is updated to the purchase cost. This keeps product prices in sync with the latest costs.
+</Info>
+
+## Supplier Management
+
+Suppliers are managed through SupplierViewModel:
+
+```kotlin
+// SupplierViewModel.kt
+class SupplierViewModel(
+    private val supplierDao: SupplierDao
+) : ViewModel() {
+
+    val suppliers: StateFlow<List<Supplier>> =
+        supplierDao.observeAll()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _events = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val events: SharedFlow<String> = _events.asSharedFlow()
+
+    fun addSupplier(ruc: String, nombre: String, telefono: String?) = viewModelScope.launch {
+        val r = ruc.trim()
+        val n = nombre.trim()
+        val t = telefono?.trim().takeUnless { it.isNullOrBlank() }
+
+        if (r.isBlank() || n.isBlank()) {
+            _events.tryEmit("RUC y nombre son obligatorios")
+            return@launch
+        }
+
+        val id = supplierDao.insertIgnore(Supplier(ruc = r, nombre = n, telefono = t))
+        if (id == -1L) _events.tryEmit("El proveedor ya existe (RUC o nombre)")
+        else _events.tryEmit("Proveedor agregado")
+    }
+
+    fun renameSupplier(id: Int, nuevoNombre: String) = viewModelScope.launch {
+        val nuevo = nuevoNombre.trim()
+        if (nuevo.isBlank()) return@launch
+        supplierDao.rename(id, nuevo)
+        _events.tryEmit("Proveedor actualizado")
+    }
+
+    fun deleteSupplier(supplier: Supplier) = viewModelScope.launch {
+        supplierDao.delete(supplier)
+        _events.tryEmit("Proveedor eliminado")
+    }
+}
+```
+
+## Best Practices
+
+<Note>
+  **Draft vs. Finalized Cart**: Purchases use a draft cart to allow flexibility in product creation. Unlike sales, you're not limited to existing products.
+</Note>
+
+<Warning>
+  **Supplier Selection Required**: All purchases must be linked to a supplier. The finalize button is disabled until a supplier is selected.
+</Warning>
+
+<Info>
+  **Cost Tracking**: Purchase costs are stored separately from product prices. This allows tracking cost history and calculating profit margins.
+</Info>
+
+## Related Components
+
+- [Product Management](/features/products) - Purchases can create products automatically
+- [Supplier Management](/features/suppliers) - Detailed supplier CRUD operations
+- [Dashboard](/features/dashboard) - View purchase metrics
+- [Cash Closure](/features/cash-closure) - Purchases count as daily expenses

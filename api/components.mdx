@@ -1,0 +1,621 @@
+---
+title: 'UI Components'
+description: 'Reusable Jetpack Compose components and Material Design 3 theming'
+icon: 'puzzle-piece'
+---
+
+## Overview
+
+Bodeguita uses reusable **Jetpack Compose** components following Material Design 3 guidelines. All components are located in `ui/components/` and `ui/theme/` packages.
+
+---
+
+## Common Components
+
+### PageLayout
+
+Standard page layout with top bar and consistent padding.
+
+```kotlin
+@Composable
+fun PageLayout(
+    title: String,
+    onMenuClick: () -> Unit,
+    content: @Composable () -> Unit
+)
+```
+
+**Usage:**
+```kotlin
+PageLayout(
+    title = "Products",
+    onMenuClick = { /* Open drawer */ }
+) {
+    // Screen content here
+    Column {
+        Text("Product List")
+        // More content...
+    }
+}
+```
+
+**Features:**
+- Top app bar with menu icon
+- Automatic padding from system bars
+- Consistent background color
+- 16dp content padding
+
+**File location:** `ui/components/CommonComponents.kt:92`
+
+---
+
+### TopBar
+
+Top app bar with title and navigation icon.
+
+```kotlin
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TopBar(
+    title: String,
+    onMenuClick: () -> Unit
+)
+```
+
+**Features:**
+```kotlin
+TopAppBar(
+    title = {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    },
+    navigationIcon = {
+        IconButton(onClick = onMenuClick) {
+            Icon(
+                imageVector = Icons.Default.Menu,
+                contentDescription = "Menú",
+                tint = PrimaryGreen
+            )
+        }
+    },
+    colors = TopAppBarDefaults.topAppBarColors(
+        containerColor = MaterialTheme.colorScheme.surface,
+    ),
+    modifier = Modifier.shadow(4.dp)
+)
+```
+
+**File location:** `ui/components/CommonComponents.kt:20`
+
+---
+
+### PrimaryButton
+
+Standardized button with primary brand styling.
+
+```kotlin
+@Composable
+fun PrimaryButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+)
+```
+
+**Usage:**
+```kotlin
+PrimaryButton(
+    text = "Guardar Producto",
+    onClick = { /* Save logic */ },
+    modifier = Modifier.fillMaxWidth(),
+    enabled = formIsValid
+)
+```
+
+**Styling:**
+```kotlin
+Button(
+    onClick = onClick,
+    modifier = modifier,
+    enabled = enabled,
+    colors = ButtonDefaults.buttonColors(
+        containerColor = PrimaryGreen  // #16A34A
+    ),
+    shape = RoundedCornerShape(10.dp)
+) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge
+    )
+}
+```
+
+**File location:** `ui/components/CommonComponents.kt:52`
+
+---
+
+### AppCard
+
+Reusable card container with consistent styling.
+
+```kotlin
+@Composable
+fun AppCard(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+)
+```
+
+**Usage:**
+```kotlin
+AppCard(modifier = Modifier.fillMaxWidth()) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text("Product Details", style = MaterialTheme.typography.titleMedium)
+        Text("Name: Arroz Extra")
+        Text("Price: S/ 15.50")
+    }
+}
+```
+
+**Implementation:**
+```kotlin
+Surface(
+    modifier = modifier,
+    shape = RoundedCornerShape(10.dp),
+    color = MaterialTheme.colorScheme.surface,
+    shadowElevation = 1.dp
+) {
+    Box(modifier = Modifier.padding(24.dp)) {
+        content()
+    }
+}
+```
+
+**File location:** `ui/components/CommonComponents.kt:75`
+
+---
+
+## Chart Components
+
+### ActividadSemanalChart
+
+Weekly sales activity bar chart using Vico library.
+
+```kotlin
+@Composable
+fun ActividadSemanalChart(salesViewModel: SalesViewModel)
+```
+
+**Data Processing:**
+```kotlin
+val weeklySalesData by salesViewModel.weeklySales.collectAsState()
+
+val chartData = remember(weeklySalesData) {
+    val salesMap = weeklySalesData.associate { it.saleDate to it.total }
+    val entries = mutableListOf<ChartEntry>()
+    val days = mutableListOf<String>()
+
+    val dbFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+    val labelFormat = SimpleDateFormat("E", Locale("es", "ES"))
+
+    val calendar = Calendar.getInstance().apply {
+        add(Calendar.DAY_OF_YEAR, -6)
+    }
+
+    repeat(7) { i ->
+        val dateKey = dbFormat.format(calendar.time)
+        val dayLabel = labelFormat.format(calendar.time)
+            .replaceFirstChar { it.titlecase(Locale.getDefault()) }
+
+        val total = salesMap[dateKey] ?: 0.0
+
+        entries.add(entryOf(i, total.toFloat()))
+        days.add(dayLabel)
+
+        calendar.add(Calendar.DAY_OF_YEAR, 1)
+    }
+
+    Pair(entries, days)
+}
+```
+
+**Chart Rendering:**
+```kotlin
+Card(
+    modifier = Modifier.fillMaxWidth(),
+    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+) {
+    Column(modifier = Modifier.padding(16.dp)) {
+        Text(
+            text = "Actividad Semanal",
+            style = MaterialTheme.typography.titleMedium
+        )
+
+        ProvideChartStyle {
+            Chart(
+                chart = columnChart(),
+                chartModelProducer = chartEntryModelProducer,
+                startAxis = rememberStartAxis(
+                    title = null,
+                    valueFormatter = { value, _ -> "S/ ${value.toInt()}" }
+                ),
+                bottomAxis = rememberBottomAxis(
+                    title = null,
+                    valueFormatter = bottomAxisValueFormatter
+                ),
+                modifier = Modifier.height(200.dp)
+            )
+        }
+    }
+}
+```
+
+**Features:**
+- 7-day sales history
+- Spanish day labels (Lun, Mar, Mié, etc.)
+- Currency formatting (S/ amount)
+- Automatic data updates from ViewModel
+- Empty state handling (shows 0 for days with no sales)
+
+**Dependencies:**
+```gradle
+implementation "com.patrykandpatryk.vico:compose:1.13.1"
+implementation "com.patrykandpatryk.vico:core:1.13.1"
+```
+
+**File location:** `ui/components/ActividadSemanalChart.kt:44`
+
+---
+
+## Theme System
+
+### Color Palette
+
+Bodeguita uses a custom green-based color scheme.
+
+```kotlin
+// Brand Colors
+val PrimaryGreen = Color(0xFF16A34A)        // Main brand color
+val PrimaryGreenHover = Color(0xFF22C55E)   // Hover state
+
+// Backgrounds
+val BackgroundStart = Color(0xFFFAFAF8)     // Warm stone-50
+val BackgroundEnd = Color(0xFFF5F5F4)       // Stone-100
+val CardBackground = Color(0xFFFFFFFF)      // White
+val InputBackground = Color(0xFFF9FAF8)     // Light input bg
+
+// Text Colors
+val PrimaryText = Color(0xFF1A1F16)         // Dark text
+val SecondaryText = Color(0xFF6B7164)       // Muted text
+
+// Status Colors
+val WarningColor = Color(0xFFF97316)        // Orange warning
+val ErrorColor = Color(0xFFDC2626)          // Red error
+val SuccessColor = Color(0xFF16A34A)        // Green success
+
+// Chart Colors
+val ChartGreen1 = Color(0xFF16A34A)
+val ChartGreen2 = Color(0xFF22C55E)
+val ChartGreen3 = Color(0xFF4ADE80)
+val ChartGreen4 = Color(0xFF86EFAC)
+val ChartGreen5 = Color(0xFFBBF7D0)
+```
+
+**File location:** `ui/theme/Color.kt`
+
+---
+
+### Light & Dark Themes
+
+Bodeguita supports both light and dark color schemes.
+
+**Light Color Scheme:**
+```kotlin
+private val LightColorScheme = lightColorScheme(
+    primary = PrimaryGreen,
+    secondary = PrimaryGreenHover,
+    background = BackgroundStart,
+    surface = CardBackground,
+    error = ErrorColor,
+    onPrimary = CardBackground,
+    onSecondary = PrimaryText,
+    onBackground = PrimaryText,
+    onSurface = PrimaryText,
+    onError = CardBackground
+)
+```
+
+**Dark Color Scheme:**
+```kotlin
+private val DarkColorScheme = darkColorScheme(
+    primary = Color(0xFF66BB6A),           // Lighter green for dark mode
+    secondary = Color(0xFF81C784),         // Lighter hover
+    background = Color(0xFF121212),        // Pure black
+    surface = Color(0xFF1E1E1E),          // Dark cards
+    error = Color(0xFFEF5350),            // Light red
+    onPrimary = Color(0xFF1A1A1A),        // Dark text on primary
+    onSecondary = Color(0xFFE0E0E0),      // Light text
+    onBackground = Color(0xFFE0E0E0),     // Light text on dark bg
+    onSurface = Color(0xFFE0E0E0),        // Light text on dark surface
+    onError = Color.White                  // White text on error
+)
+```
+
+**Theme Application:**
+```kotlin
+@Composable
+fun MiniTiendaTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit
+) {
+    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+    val view = LocalView.current
+
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as Activity).window
+            window.statusBarColor = colorScheme.primary.toArgb()
+            WindowCompat.getInsetsController(window, view)
+                .isAppearanceLightStatusBars = !darkTheme
+        }
+    }
+
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = Typography,
+        content = content
+    )
+}
+```
+
+**File location:** `ui/theme/Theme.kt:44`
+
+---
+
+### Theme Manager
+
+Manages theme switching with SharedPreferences persistence.
+
+```kotlin
+class ThemeManager(context: Context) {
+    private val prefs = context.getSharedPreferences(
+        "theme_prefs",
+        Context.MODE_PRIVATE
+    )
+
+    private val _isDarkTheme = MutableStateFlow(
+        prefs.getBoolean("dark_theme", false)
+    )
+    val isDarkTheme: StateFlow<Boolean> = _isDarkTheme.asStateFlow()
+
+    fun toggleTheme() {
+        val newValue = !_isDarkTheme.value
+        _isDarkTheme.value = newValue
+        prefs.edit().putBoolean("dark_theme", newValue).apply()
+    }
+}
+```
+
+**Usage in MainActivity:**
+```kotlin
+class MainActivity : ComponentActivity() {
+    private lateinit var themeManager: ThemeManager
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        themeManager = ThemeManager(this)
+
+        setContent {
+            val isDarkTheme by themeManager.isDarkTheme.collectAsState()
+
+            MiniTiendaTheme(darkTheme = isDarkTheme) {
+                // App content
+            }
+        }
+    }
+}
+```
+
+**File location:** `utils/ThemeManager.kt`
+
+---
+
+## Typography
+
+Material Design 3 typography scale.
+
+```kotlin
+val Typography = Typography(
+    displayLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Normal,
+        fontSize = 57.sp,
+        lineHeight = 64.sp,
+        letterSpacing = (-0.25).sp
+    ),
+    titleLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
+        letterSpacing = 0.sp
+    ),
+    bodyLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Normal,
+        fontSize = 16.sp,
+        lineHeight = 24.sp,
+        letterSpacing = 0.5.sp
+    ),
+    labelMedium = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Medium,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        letterSpacing = 0.5.sp
+    )
+)
+```
+
+**File location:** `ui/theme/Type.kt`
+
+---
+
+## Component Usage Examples
+
+### Building a Screen with Components
+
+```kotlin
+@Composable
+fun MyCustomScreen(
+    navController: NavController,
+    onMenuClick: () -> Unit
+) {
+    PageLayout(
+        title = "My Screen",
+        onMenuClick = onMenuClick
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Metrics Card
+            AppCard(modifier = Modifier.fillMaxWidth()) {
+                Column {
+                    Text(
+                        "Daily Summary",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        "Sales: S/ 1,250.00",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
+            }
+
+            // Action Button
+            PrimaryButton(
+                text = "Generate Report",
+                onClick = { /* Action */ },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Chart
+            ActividadSemanalChart(salesViewModel = salesViewModel)
+        }
+    }
+}
+```
+
+### Custom Card with Status Badge
+
+```kotlin
+@Composable
+fun ProductCard(
+    product: Product,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    AppCard(modifier = Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(
+                        product.name,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        product.code,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SecondaryText
+                    )
+                }
+                StockBadge(stock = product.stock)
+            }
+
+            HorizontalDivider()
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Price: S/ ${"%.2f".format(product.price)}")
+                Row {
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Default.Edit, "Edit", tint = PrimaryGreen)
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Default.Delete, "Delete", tint = ErrorColor)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StockBadge(stock: Int) {
+    val (bg, fg) = when {
+        stock == 0 -> ErrorColor to Color.White
+        stock < 10 -> WarningColor to Color.White
+        else -> PrimaryGreen to Color.White
+    }
+    Surface(color = bg, shape = MaterialTheme.shapes.small) {
+        Text(
+            text = when {
+                stock == 0 -> "Sin Stock"
+                stock < 10 -> "Stock Bajo"
+                else -> "Disponible"
+            },
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = fg
+        )
+    }
+}
+```
+
+---
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Reusability" icon="recycle">
+    Extract repeated UI patterns into reusable components in `ui/components/`.
+  </Card>
+  
+  <Card title="Theme Colors" icon="palette">
+    Always use `MaterialTheme.colorScheme` colors instead of hardcoded values for theme support.
+  </Card>
+  
+  <Card title="Typography" icon="font">
+    Use `MaterialTheme.typography` styles for consistent text styling across the app.
+  </Card>
+  
+  <Card title="Accessibility" icon="universal-access">
+    Provide `contentDescription` for all icons and ensure sufficient color contrast.
+  </Card>
+</CardGroup>
+
+## Related Documentation
+
+<CardGroup cols={3}>
+  <Card title="Screens" icon="window" href="/api/screens">
+    Jetpack Compose screens
+  </Card>
+  
+  <Card title="ViewModels" icon="layer-group" href="/api/viewmodels">
+    State management
+  </Card>
+  
+  <Card title="Data Models" icon="database" href="/api/models">
+    Room entities and data classes
+  </Card>
+</CardGroup>

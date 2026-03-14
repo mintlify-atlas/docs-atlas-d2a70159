@@ -1,0 +1,587 @@
+---
+title: "Dashboard"
+description: "View sales statistics and quick access to modules"
+---
+
+The Dashboard is the central hub of Bodeguita, providing real-time metrics, weekly activity charts, low stock alerts, and quick navigation to core modules.
+
+## Overview
+
+The Dashboard screen (`DashboardScreen.kt`) displays key business metrics and provides instant access to all major features. It combines data from multiple ViewModels to present a comprehensive view of store operations.
+
+### Key Components
+
+- **Real-time Metrics**: Today's sales, units sold, total products, and last sale amount
+- **Weekly Activity Chart**: Visual representation of sales over the last 7 days
+- **Low Stock Alerts**: Automatic detection of products below threshold (< 10 units)
+- **Quick Actions**: One-tap navigation to Products, Sales, Purchases, and Cash Closure
+
+## Architecture
+
+The Dashboard follows MVVM pattern with reactive data flows:
+
+```kotlin
+@Composable
+fun DashboardScreen(
+    navController: NavController,
+    productViewModel: ProductViewModel,
+    salesViewModel: SalesViewModel,
+    dashboardViewModel: DashboardViewModel,
+    onMenuClick: () -> Unit
+)
+```
+
+### Data Sources
+
+The dashboard aggregates data from three ViewModels:
+
+<CardGroup cols={3}>
+  <Card title="DashboardViewModel" icon="chart-line">
+    Today's sales count, units sold, and last sale brief
+  </Card>
+  <Card title="ProductViewModel" icon="box">
+    Total products and stock levels for alerts
+  </Card>
+  <Card title="SalesViewModel" icon="shopping-cart">
+    Weekly sales data for activity chart
+  </Card>
+</CardGroup>
+
+## Real-Time Metrics
+
+The dashboard displays four primary metrics that update automatically:
+
+### Today's Sales Count
+
+Tracks the number of transactions completed today:
+
+```kotlin
+// DashboardViewModel.kt
+val todaySalesCount: StateFlow<Int> =
+    saleDao.todaySalesCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+```
+
+### Units Sold Today
+
+Calculates total quantity of all items sold:
+
+```kotlin
+// DashboardViewModel.kt
+val todayUnitsSold: StateFlow<Int> =
+    saleDao.todayUnitsSold()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+```
+
+### Total Products
+
+Counts all registered products in inventory:
+
+```kotlin
+// DashboardScreen.kt:58
+val products = productViewModel.products.collectAsState(initial = emptyList()).value
+DashboardStatsGrid(
+    todaySales = todaySales,
+    todayUnits = todayUnits,
+    lastSale   = lastSale,
+    totalProducts = products.size
+)
+```
+
+### Last Sale Information
+
+Displays the most recent sale with ID, total, and timestamp:
+
+```kotlin
+// DashboardViewModel.kt
+val lastSaleBrief: StateFlow<SaleBrief?> =
+    saleDao.lastSaleBrief()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+```
+
+## Metric Cards Implementation
+
+<Steps>
+  <Step title="Define Metric Data">
+    Create a data class to represent each metric card:
+
+    ```kotlin
+    // DashboardScreen.kt:92
+    private data class DashboardMetric(
+        val badge: String?,
+        val title: String,
+        val helper: String?,
+        val value: String,
+        val icon: ImageVector
+    )
+    ```
+  </Step>
+
+  <Step title="Build Metrics List">
+    Assemble the four metrics with real data:
+
+    ```kotlin
+    // DashboardScreen.kt:169
+    val metrics = listOf(
+        DashboardMetric(
+            badge = "Hoy",
+            title = "Ventas",
+            helper = "Transacciones del día",
+            value = todaySales.toString(),
+            icon = Icons.Default.ShoppingCart
+        ),
+        DashboardMetric(
+            badge = "Hoy",
+            title = "Unidades vendidas",
+            helper = "Sumatoria de ítems",
+            value = todayUnits.toString(),
+            icon = Icons.Default.Inventory
+        ),
+        DashboardMetric(
+            badge = "Inventario",
+            title = "Total productos",
+            helper = "Registrados en stock",
+            value = totalProducts.toString(),
+            icon = Icons.Default.Inventory2
+        ),
+        DashboardMetric(
+            badge = "Última venta",
+            title = "Monto",
+            helper = lastSale?.let { "ID #${it.id} • ${fechaString(it.fecha)}" } ?: "Sin ventas aún",
+            value = "S/ " + String.format("%.2f", lastSale?.total ?: 0.0),
+            icon = Icons.Default.AttachMoney
+        )
+    )
+    ```
+  </Step>
+
+  <Step title="Render Cards">
+    Display each metric in a styled card:
+
+    ```kotlin
+    // DashboardScreen.kt:101
+    @Composable
+    private fun DashboardMetricCard(m: DashboardMetric) {
+        AppCard(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp)
+            ) {
+                m.badge?.let { badge ->
+                    Text(
+                        text = badge,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SecondaryText
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(text = m.title, style = MaterialTheme.typography.titleSmall)
+                        m.helper?.let { helper ->
+                            Text(
+                                text = helper,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = SecondaryText,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(PrimaryGreen.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = m.icon,
+                            contentDescription = null,
+                            tint = PrimaryGreen,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = m.value,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            }
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Weekly Activity Chart
+
+The dashboard displays sales trends over the last 7 days using the Vico charting library:
+
+```kotlin
+// DashboardScreen.kt:67
+ActividadSemanalChart(salesViewModel = salesViewModel)
+```
+
+### Chart Data Flow
+
+<Steps>
+  <Step title="ViewModel Loads Weekly Data">
+    ```kotlin
+    // SalesViewModel.kt:92
+    private fun loadWeeklySales() {
+        val calendar = Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_YEAR, -6)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val sevenDaysAgoTimestamp = calendar.timeInMillis
+
+        viewModelScope.launch {
+            repo.getWeeklySalesSummary(sevenDaysAgoTimestamp)
+                .catch { exception ->
+                    _weeklySales.value = emptyList()
+                }
+                .collect { salesData ->
+                    _weeklySales.value = salesData
+                }
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Chart Processes Data">
+    ```kotlin
+    // ActividadSemanalChart.kt:51
+    val chartData = remember(weeklySalesData) {
+        val salesMap = weeklySalesData.associate { it.saleDate to it.total }
+        val entries = mutableListOf<ChartEntry>()
+        val days = mutableListOf<String>()
+
+        val dbFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val labelFormat = SimpleDateFormat("E", Locale("es", "ES"))
+
+        val calendar = Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_YEAR, -6)
+        }
+
+        repeat(7) { i ->
+            val dateKey = dbFormat.format(calendar.time)
+            val dayLabel = labelFormat.format(calendar.time)
+                .replaceFirstChar { it.titlecase(Locale.getDefault()) }
+
+            val total = salesMap[dateKey] ?: 0.0
+            entries.add(entryOf(i, total.toFloat()))
+            days.add(dayLabel)
+
+            calendar.add(Calendar.DAY_OF_YEAR, 1)
+        }
+
+        Pair(entries, days)
+    }
+    ```
+  </Step>
+
+  <Step title="Render Chart">
+    ```kotlin
+    // ActividadSemanalChart.kt:109
+    ProvideChartStyle {
+        Chart(
+            chart = columnChart(),
+            chartModelProducer = chartEntryModelProducer,
+            startAxis = rememberStartAxis(
+                title = null,
+                valueFormatter = { value, _ -> "S/ ${value.toInt()}" }
+            ),
+            bottomAxis = rememberBottomAxis(
+                title = null,
+                valueFormatter = bottomAxisValueFormatter
+            ),
+            modifier = Modifier.height(200.dp)
+        )
+    }
+    ```
+  </Step>
+</Steps>
+
+## Low Stock Alerts
+
+The dashboard automatically detects products with inventory below 10 units and displays a warning banner:
+
+```kotlin
+// DashboardScreen.kt:70
+val lowStockItems = products
+    .filter { it.stock < 10 }
+    .sortedBy { it.stock }
+    .map { it.name to it.stock }
+
+if (lowStockItems.isNotEmpty()) {
+    DashboardLowStockBanner(
+        lowStockItems = lowStockItems,
+        onSeeProducts = { navController.navigate("products") }
+    )
+}
+```
+
+### Low Stock Banner UI
+
+```kotlin
+// DashboardScreen.kt:221
+@Composable
+private fun DashboardLowStockBanner(
+    lowStockItems: List<Pair<String, Int>>,
+    onSeeProducts: () -> Unit,
+    maxItems: Int = 3
+) {
+    val bg = WarningColor.copy(alpha = 0.06f)
+    val br = WarningColor.copy(alpha = 0.25f)
+
+    AppCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, br, RoundedCornerShape(16.dp))
+            .background(bg, RoundedCornerShape(16.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ErrorOutline,
+                        contentDescription = null,
+                        tint = WarningColor,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Productos con Bajo Stock",
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                TextButton(onClick = onSeeProducts) {
+                    Text("Ver todos", color = WarningColor)
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                lowStockItems.take(maxItems).forEach { (name, qty) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(name, style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            text = "$qty unidades",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = WarningColor
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+<Note>
+  The low stock threshold is hardcoded at 10 units. Products with exactly 0 stock show as "Sin Stock" (red badge), while 1-9 units show as "Stock Bajo" (yellow badge).
+</Note>
+
+## Quick Action Cards
+
+Provide one-tap navigation to major features:
+
+```kotlin
+// DashboardScreen.kt:305
+@Composable
+private fun DashboardQuickActionsGrid(onClick: (String) -> Unit) {
+    val actions = listOf(
+        DashboardAction(
+            badge = "Gestionar",
+            title = "Productos",
+            subtitle = "Ir a productos",
+            route = "products",
+            icon = Icons.Default.Inventory
+        ),
+        DashboardAction(
+            badge = "Registrar",
+            title = "Ventas",
+            subtitle = "Ir a ventas",
+            route = "sales",
+            icon = Icons.Default.ShoppingCart
+        ),
+        DashboardAction(
+            badge = "Registrar",
+            title = "Compras",
+            subtitle = "Ir a compras",
+            route = "purchases",
+            icon = Icons.Default.TrendingUp
+        ),
+        DashboardAction(
+            badge = "Ver",
+            title = "Cierre de Caja",
+            subtitle = "Ir a cierre",
+            route = "cash_closure",
+            icon = Icons.Default.AttachMoney
+        )
+    )
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(text = "Acceso Rápido", style = MaterialTheme.typography.titleLarge)
+
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            actions.chunked(1).forEach { row ->
+                Row(Modifier.fillMaxWidth()) {
+                    row.forEach { a ->
+                        Box(Modifier.fillMaxWidth()) {
+                            DashboardActionCard(a) { onClick(a.route) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+### Action Card Component
+
+```kotlin
+// DashboardScreen.kt:354
+@Composable
+private fun DashboardActionCard(
+    action: DashboardAction,
+    onClick: () -> Unit
+) {
+    AppCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+        ) {
+            action.badge?.let { badge ->
+                Text(
+                    text = badge,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SecondaryText
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(text = action.title, style = MaterialTheme.typography.titleSmall)
+                    action.subtitle?.let { subtitle ->
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = SecondaryText
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(PrimaryGreen.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = action.icon,
+                        contentDescription = null,
+                        tint = PrimaryGreen,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ArrowForward,
+                    contentDescription = null,
+                    tint = SecondaryText,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+```
+
+## Navigation Integration
+
+All dashboard actions use NavController for seamless navigation:
+
+```kotlin
+// DashboardScreen.kt:83
+DashboardQuickActionsGrid { route -> navController.navigate(route) }
+```
+
+### Available Routes
+
+<CardGroup cols={2}>
+  <Card title="products" icon="box">
+    Navigate to Product List Screen
+  </Card>
+  <Card title="sales" icon="shopping-cart">
+    Navigate to Sales Registration Screen
+  </Card>
+  <Card title="purchases" icon="arrow-trend-up">
+    Navigate to Purchase Registration Screen
+  </Card>
+  <Card title="cash_closure" icon="money-bill">
+    Navigate to Cash Closure Screen
+  </Card>
+</CardGroup>
+
+## Best Practices
+
+<Warning>
+  **Performance Consideration**: All StateFlows use `SharingStarted.WhileSubscribed(5_000)` to automatically stop upstream flows when no collectors are active for 5 seconds, optimizing battery and memory usage.
+</Warning>
+
+<Info>
+  The dashboard automatically refreshes when:
+  - A new sale is completed
+  - Product stock changes
+  - Products are added or removed
+  - Navigation returns to the dashboard
+</Info>
+
+## Related Components
+
+- [Product Management](/features/products) - Manage inventory and categories
+- [Sales Management](/features/sales) - Register new sales
+- [Cash Closure](/features/cash-closure) - View daily financial reports

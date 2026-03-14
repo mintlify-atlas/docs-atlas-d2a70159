@@ -1,0 +1,463 @@
+---
+title: 'Repository Layer'
+description: 'Repository pattern implementation coordinating DAOs and business logic'
+icon: 'box'
+---
+
+## Overview
+
+Repositories provide a clean abstraction layer between ViewModels and DAOs. They encapsulate business logic, coordinate multiple DAOs, and manage database transactions. All repositories are located in the `repository/` package.
+
+## Architecture Pattern
+
+Repositories follow the Repository Pattern:
+
+```
+ViewModel → Repository → DAO → Database
+```
+
+**Benefits:**
+- Centralized business logic
+- Transaction management across multiple DAOs
+- Simplified ViewModel code
+- Testability through dependency injection
+
+## ProductRepository
+
+Manages product inventory operations.
+
+**Location:** `repository/ProductRepository.kt:6`
+
+### Implementation
+
+```kotlin
+class ProductRepository(private val productDao: ProductDao) {
+
+    fun observeAllProducts() = productDao.observeAllProducts()
+
+    suspend fun upsertByCode(p: Product) = productDao.upsertByCode(p)
+
+    suspend fun deleteProduct(p: Product) = productDao.deleteProduct(p)
+
+    suspend fun updateProduct(p: Product) = productDao.updateProduct(p)
+
+    suspend fun countAll(): Int = productDao.countAll()
+}
+```
+
+### Methods
+
+<ParamField path="observeAllProducts" type="Flow<List<Product>>">
+  Reactive stream of all products, sorted alphabetically
+</ParamField>
+
+<ParamField path="upsertByCode" type="suspend fun">
+  Insert new product or update existing by unique code. Prevents duplicates.
+</ParamField>
+
+<ParamField path="deleteProduct" type="suspend fun">
+  Delete a product. May fail if foreign key constraints prevent deletion.
+</ParamField>
+
+<ParamField path="updateProduct" type="suspend fun">
+  Update all fields of an existing product
+</ParamField>
+
+<ParamField path="countAll" type="suspend fun">
+  Returns total number of products in inventory
+</ParamField>
+
+### Usage Example
+
+```kotlin
+class ProductViewModel(private val repository: ProductRepository) : ViewModel() {
+    
+    val allProducts = repository.observeAllProducts()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+    
+    fun addOrUpdateProduct(product: Product) {
+        viewModelScope.launch {
+            repository.upsertByCode(product)
+        }
+    }
+}
+```
+
+## SaleRepository
+
+Manages sales transactions with automatic stock deduction.
+
+**Location:** `repository/SaleRepository.kt:11`
+
+### CartItem Data Class
+
+```kotlin
+data class CartItem(val product: Product, val qty: Int) {
+    val subtotal: Double get() = product.price * qty
+}
+```
+
+**Location:** `repository/SaleRepository.kt:16`
+
+Encapsulates a product and quantity for shopping cart operations.
+
+### Implementation
+
+```kotlin
+class SaleRepository(
+    private val db: AppDatabase,
+    private val saleDao: SaleDao,
+    private val productDao: ProductDao
+) {
+    fun getWeeklySalesSummary(timestamp: Long): Flow<List<DailySaleSummary>> {
+        return db.saleDao().getWeeklySalesSummary(timestamp)
+    }
+
+    fun observeSales() = saleDao.observeSales()
+
+    suspend fun makeSale(cart: List<CartItem>): Long {
+        require(cart.isNotEmpty()) { "Carrito vacío" }
+
+        return db.withTransaction {
+            // Decrease stock for each product (fails if insufficient)
+            for (item in cart) {
+                val updated = productDao.decreaseStock(item.product.id, item.qty)
+                if (updated == 0) {
+                    throw IllegalStateException("Stock insuficiente para ${item.product.name}")
+                }
+            }
+
+            val total = cart.sumOf { it.subtotal }
+            val saleId = saleDao.insertSale(Sale(total = total))
+            val details = cart.map {
+                SaleDetail(
+                    saleId = saleId,
+                    productId = it.product.id,
+                    cantidad = it.qty,
+                    precioUnit = it.product.price,
+                    subtotal = it.subtotal
+                )
+            }
+            saleDao.insertDetails(details)
+            saleId
+        }
+    }
+}
+```
+
+### Methods
+
+<ParamField path="observeSales" type="Flow<List<SaleWithDetails>>">
+  Reactive stream of all sales with their line items, newest first
+</ParamField>
+
+<ParamField path="getWeeklySalesSummary" type="Flow<List<DailySaleSummary>>">
+  Daily sales totals for the past 7 days
+</ParamField>
+
+<ParamField path="makeSale" type="suspend fun">
+  Creates a complete sale transaction. Decreases stock atomically. Throws exception if insufficient stock or empty cart.
+</ParamField>
+
+### Transaction Logic
+
+**Location:** `repository/SaleRepository.kt:27`
+
+The `makeSale` method demonstrates the repository's key responsibility: **coordinating multiple DAOs in a single transaction**.
+
+**Steps:**
+1. **Validate** cart is not empty
+2. **Begin transaction** using `db.withTransaction`
+3. **Decrease stock** for each product (atomic operation)
+4. **Check stock** was successfully decreased (0 = insufficient stock)
+5. **Calculate total** from all cart items
+6. **Insert sale header** and get generated ID
+7. **Insert sale details** with product references
+8. **Commit transaction** (automatic if no exception)
+9. **Return sale ID**
+
+If any step fails, the entire transaction rolls back - no partial sales or incorrect stock levels.
+
+### Usage Example
+
+```kotlin
+class SalesViewModel(
+    private val saleRepository: SaleRepository
+) : ViewModel() {
+    
+    val allSales = saleRepository.observeSales()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    
+    fun completeSale(cart: List<SaleRepository.CartItem>) {
+        viewModelScope.launch {
+            try {
+                val saleId = saleRepository.makeSale(cart)
+                _saleCompleted.emit(saleId)
+            } catch (e: IllegalStateException) {
+                _error.emit(e.message ?: "Sale failed")
+            }
+        }
+    }
+}
+```
+
+## PurchaseRepository
+
+Manages purchase transactions with automatic stock increase.
+
+**Location:** `repository/PurchaseRepository.kt:10`
+
+### CartItem Data Class
+
+```kotlin
+data class CartItem(val product: Product, val qty: Int, val cost: Double) {
+    val subtotal: Double = qty * cost
+}
+```
+
+**Location:** `repository/PurchaseRepository.kt:15`
+
+Note the difference from `SaleRepository.CartItem`: purchases track **cost** (what you pay supplier) rather than using product's sale price.
+
+### Implementation
+
+```kotlin
+class PurchaseRepository(
+    private val db: AppDatabase,
+    private val purchaseDao: PurchaseDao,
+    private val productDao: ProductDao
+) {
+    suspend fun makePurchase(supplierId: Int, lines: List<CartItem>): Long = withContext(Dispatchers.IO) {
+        require(lines.isNotEmpty()) { "El carrito está vacío" }
+
+        val total = lines.sumOf { it.subtotal }
+        val purchaseId = purchaseDao.insertPurchase(
+            Purchase(proveedorId = supplierId, total = total)
+        )
+
+        val details = lines.map {
+            PurchaseDetail(
+                purchaseId = purchaseId,
+                productId = it.product.id,
+                cantidad = it.qty,
+                costoUnit = it.cost
+            )
+        }
+        purchaseDao.insertDetails(details)
+
+        // Increase stock
+        lines.forEach { line ->
+            val p = line.product.copy(stock = line.product.stock + line.qty)
+            productDao.updateProduct(p)
+        }
+
+        purchaseId
+    }
+}
+```
+
+### Methods
+
+<ParamField path="makePurchase" type="suspend fun">
+  Creates a complete purchase transaction. Records purchase details and increases product stock. Runs on IO dispatcher.
+</ParamField>
+
+### Transaction Logic
+
+**Location:** `repository/PurchaseRepository.kt:19`
+
+**Steps:**
+1. **Validate** cart is not empty
+2. **Calculate total** purchase amount
+3. **Insert purchase header** with supplier reference
+4. **Insert purchase details** for each line item
+5. **Increase stock** for each purchased product
+6. **Return purchase ID**
+
+Note: Unlike sales, purchases don't need to check stock availability - they're adding inventory.
+
+### Usage Example
+
+```kotlin
+class PurchaseViewModel(
+    private val purchaseRepository: PurchaseRepository
+) : ViewModel() {
+    
+    fun completePurchase(
+        supplierId: Int,
+        cart: List<PurchaseRepository.CartItem>
+    ) {
+        viewModelScope.launch {
+            try {
+                val purchaseId = purchaseRepository.makePurchase(supplierId, cart)
+                _purchaseCompleted.emit(purchaseId)
+            } catch (e: IllegalArgumentException) {
+                _error.emit("Empty cart")
+            }
+        }
+    }
+}
+```
+
+## CategoryRepository
+
+Simple repository for category management.
+
+**Location:** `repository/CategoryRepository.kt:5`
+
+### Implementation
+
+```kotlin
+class CategoryRepository(private val dao: CategoryDao) {
+    fun observeAll() = dao.observeAll()
+    suspend fun add(nombre: String) = dao.upsertByName(nombre)
+    suspend fun delete(id: Long) = dao.deleteById(id)
+}
+```
+
+### Methods
+
+<ParamField path="observeAll" type="Flow<List<Category>>">
+  Reactive stream of all categories, sorted alphabetically
+</ParamField>
+
+<ParamField path="add" type="suspend fun">
+  Add category by name. Returns existing category ID if name already exists.
+</ParamField>
+
+<ParamField path="delete" type="suspend fun">
+  Delete category by ID. Returns number of rows deleted.
+</ParamField>
+
+### Usage Example
+
+```kotlin
+class CategoryViewModel(
+    private val repository: CategoryRepository
+) : ViewModel() {
+    
+    val categories = repository.observeAll()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    
+    fun addCategory(name: String) {
+        viewModelScope.launch {
+            repository.add(name)
+        }
+    }
+}
+```
+
+## Repository Pattern Best Practices
+
+<Card title="Single Responsibility" icon="bullseye">
+  Each repository manages one domain entity. Don't create "god repositories" that handle everything.
+</Card>
+
+<Card title="Transaction Boundaries" icon="shield">
+  Use `db.withTransaction` when coordinating multiple DAOs. Ensures atomicity and consistency.
+</Card>
+
+<Card title="Dependency Injection" icon="plug">
+  Inject DAOs through constructor for testability. Makes it easy to mock DAOs in unit tests.
+</Card>
+
+<Card title="Business Logic Location" icon="brain">
+  Complex validation and coordination logic belongs in repositories, not ViewModels or DAOs.
+</Card>
+
+<Card title="Error Handling" icon="triangle-exclamation">
+  Throw meaningful exceptions from repositories. Let ViewModels handle user-facing error messages.
+</Card>
+
+<Card title="Coroutine Dispatchers" icon="gears">
+  Room suspend functions run on background threads automatically. Only use `withContext(Dispatchers.IO)` for non-Room operations.
+</Card>
+
+## Common Patterns
+
+### Upsert Pattern
+
+Insert if new, update if exists:
+
+```kotlin
+suspend fun upsertByCode(p: Product) = productDao.upsertByCode(p)
+```
+
+### Transaction Coordination
+
+Multiple operations that must succeed or fail together:
+
+```kotlin
+db.withTransaction {
+    dao1.operation1()
+    dao2.operation2()
+    dao3.operation3()
+}
+```
+
+### Reactive Streams
+
+Delegate Flow queries directly to DAO:
+
+```kotlin
+fun observeAll() = dao.observeAll()
+```
+
+### Cart Processing
+
+Convert UI cart items to database entities:
+
+```kotlin
+val details = cart.map { item ->
+    SaleDetail(
+        saleId = saleId,
+        productId = item.product.id,
+        cantidad = item.qty,
+        precioUnit = item.product.price,
+        subtotal = item.subtotal
+    )
+}
+```
+
+## Dependency Injection Setup
+
+Typical Hilt module for repository provision:
+
+```kotlin
+@Module
+@InstallIn(SingletonComponent::class)
+object RepositoryModule {
+    
+    @Provides
+    @Singleton
+    fun provideProductRepository(
+        productDao: ProductDao
+    ): ProductRepository = ProductRepository(productDao)
+    
+    @Provides
+    @Singleton
+    fun provideSaleRepository(
+        db: AppDatabase,
+        saleDao: SaleDao,
+        productDao: ProductDao
+    ): SaleRepository = SaleRepository(db, saleDao, productDao)
+    
+    @Provides
+    @Singleton
+    fun providePurchaseRepository(
+        db: AppDatabase,
+        purchaseDao: PurchaseDao,
+        productDao: ProductDao
+    ): PurchaseRepository = PurchaseRepository(db, purchaseDao, productDao)
+    
+    @Provides
+    @Singleton
+    fun provideCategoryRepository(
+        categoryDao: CategoryDao
+    ): CategoryRepository = CategoryRepository(categoryDao)
+}
+```

@@ -1,0 +1,527 @@
+---
+title: 'Testing'
+description: 'Write unit tests and UI tests for Bodeguita'
+icon: 'flask'
+---
+
+Bodeguita uses JUnit for unit testing and Espresso for UI testing. The testing setup supports both local unit tests and instrumented tests on Android devices.
+
+## Testing Setup
+
+Test dependencies are configured in `app/build.gradle.kts:83`:
+
+```kotlin
+dependencies {
+    // Unit Testing
+    testImplementation(libs.junit)
+    
+    // Android Instrumented Testing
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+    
+    // Compose UI Testing
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    
+    // Debug tools for testing
+    debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
+}
+```
+
+### Test Runner Configuration
+
+The Android test runner is configured in `app/build.gradle.kts:20`:
+
+```kotlin
+defaultConfig {
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+}
+```
+
+## Test Directory Structure
+
+Bodeguita follows the standard Android test structure:
+
+```
+app/src/
+├── test/                          # Unit tests (JVM)
+│   └── java/com/trabajo/minitienda/
+│       └── ExampleUnitTest.kt
+└── androidTest/                   # Instrumented tests (Android)
+    └── java/com/trabajo/minitienda/
+        └── ExampleInstrumentedTest.kt
+```
+
+## Unit Testing
+
+Unit tests run on the JVM without requiring an Android device. They are fast and ideal for testing business logic.
+
+### Example Unit Test
+
+From `app/src/test/java/com/trabajo/minitienda/ExampleUnitTest.kt:12`:
+
+```kotlin
+import org.junit.Test
+import org.junit.Assert.*
+
+class ExampleUnitTest {
+    @Test
+    fun addition_isCorrect() {
+        assertEquals(4, 2 + 2)
+    }
+}
+```
+
+### Writing ViewModel Unit Tests
+
+<Steps>
+  <Step title="Add Testing Dependencies">
+    Add Coroutine testing support to `build.gradle.kts`:
+
+    ```kotlin
+    dependencies {
+        testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+        testImplementation("androidx.arch.core:core-testing:2.2.0")
+        testImplementation("io.mockk:mockk:1.13.8")
+    }
+    ```
+  </Step>
+
+  <Step title="Create ViewModel Test">
+    Create a test file `ProductViewModelTest.kt` in `src/test/`:
+
+    ```kotlin
+    import androidx.arch.core.executor.testing.InstantTaskExecutorRule
+    import com.trabajo.minitienda.data.model.Product
+    import com.trabajo.minitienda.repository.ProductRepository
+    import com.trabajo.minitienda.viewmodel.ProductViewModel
+    import io.mockk.coEvery
+    import io.mockk.coVerify
+    import io.mockk.mockk
+    import kotlinx.coroutines.Dispatchers
+    import kotlinx.coroutines.ExperimentalCoroutinesApi
+    import kotlinx.coroutines.flow.flowOf
+    import kotlinx.coroutines.test.*
+    import org.junit.After
+    import org.junit.Before
+    import org.junit.Rule
+    import org.junit.Test
+    import org.junit.Assert.*
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    class ProductViewModelTest {
+
+        @get:Rule
+        val instantExecutorRule = InstantTaskExecutorRule()
+
+        private val testDispatcher = StandardTestDispatcher()
+        private lateinit var repository: ProductRepository
+        private lateinit var viewModel: ProductViewModel
+
+        @Before
+        fun setup() {
+            Dispatchers.setMain(testDispatcher)
+            repository = mockk()
+            viewModel = ProductViewModel(repository)
+        }
+
+        @After
+        fun tearDown() {
+            Dispatchers.resetMain()
+        }
+
+        @Test
+        fun `products flow emits repository data`() = runTest {
+            // Given
+            val products = listOf(
+                Product(id = 1, code = "P001", name = "Product 1", price = 10.0),
+                Product(id = 2, code = "P002", name = "Product 2", price = 20.0)
+            )
+            coEvery { repository.observeAllProducts() } returns flowOf(products)
+
+            // When
+            viewModel = ProductViewModel(repository)
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            // Then
+            assertEquals(products, viewModel.products.value)
+        }
+
+        @Test
+        fun `upsertProduct calls repository and emits success event`() = runTest {
+            // Given
+            val product = Product(
+                id = 1, 
+                code = "P001", 
+                name = "Test Product", 
+                price = 15.0
+            )
+            coEvery { repository.upsertByCode(product) } returns Unit
+
+            // When
+            viewModel.upsertProduct(product)
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            // Then
+            coVerify { repository.upsertByCode(product) }
+        }
+
+        @Test
+        fun `deleteProduct calls repository`() = runTest {
+            // Given
+            val product = Product(
+                id = 1, 
+                code = "P001", 
+                name = "Test", 
+                price = 10.0
+            )
+            coEvery { repository.deleteProduct(product) } returns Unit
+
+            // When
+            viewModel.deleteProduct(product)
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            // Then
+            coVerify { repository.deleteProduct(product) }
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Run Unit Tests">
+    Run tests from Android Studio or command line:
+
+    ```bash
+    ./gradlew test
+    ```
+  </Step>
+</Steps>
+
+## Instrumented Testing
+
+Instrumented tests run on an Android device or emulator. They can test Android framework components and UI interactions.
+
+### Example Instrumented Test
+
+From `app/src/androidTest/java/com/trabajo/minitienda/ExampleInstrumentedTest.kt:17`:
+
+```kotlin
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.junit.Assert.*
+
+@RunWith(AndroidJUnit4::class)
+class ExampleInstrumentedTest {
+    @Test
+    fun useAppContext() {
+        // Context of the app under test
+        val appContext = InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+        assertEquals("com.trabajo.minitienda", appContext.packageName)
+    }
+}
+```
+
+### Running Instrumented Tests
+
+```bash
+./gradlew connectedAndroidTest
+```
+
+## Compose UI Testing
+
+Jetpack Compose provides a comprehensive testing framework for UI tests.
+
+<Steps>
+  <Step title="Create Compose Test">
+    Create a test file in `src/androidTest/`:
+
+    ```kotlin
+    import androidx.compose.ui.test.*
+    import androidx.compose.ui.test.junit4.createComposeRule
+    import androidx.test.ext.junit.runners.AndroidJUnit4
+    import com.trabajo.minitienda.ui.theme.MiniTiendaTheme
+    import org.junit.Rule
+    import org.junit.Test
+    import org.junit.runner.RunWith
+
+    @RunWith(AndroidJUnit4::class)
+    class LoginScreenTest {
+
+        @get:Rule
+        val composeTestRule = createComposeRule()
+
+        @Test
+        fun loginScreen_displaysEmailAndPasswordFields() {
+            // Given
+            composeTestRule.setContent {
+                MiniTiendaTheme {
+                    LoginScreen(navController = mockk(relaxed = true))
+                }
+            }
+
+            // Then
+            composeTestRule
+                .onNodeWithText("Email")
+                .assertIsDisplayed()
+            composeTestRule
+                .onNodeWithText("Password")
+                .assertIsDisplayed()
+        }
+
+        @Test
+        fun loginScreen_submitButtonIsClickable() {
+            // Given
+            composeTestRule.setContent {
+                MiniTiendaTheme {
+                    LoginScreen(navController = mockk(relaxed = true))
+                }
+            }
+
+            // When/Then
+            composeTestRule
+                .onNodeWithText("Login")
+                .assertIsEnabled()
+                .performClick()
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Test User Interactions">
+    ```kotlin
+    @Test
+    fun productRegistration_enterProductDetails() {
+        composeTestRule.setContent {
+            MiniTiendaTheme {
+                ProductRegistrationScreen(
+                    navController = mockk(relaxed = true),
+                    productViewModel = mockk(relaxed = true),
+                    categoryViewModel = mockk(relaxed = true),
+                    onMenuClick = {}
+                )
+            }
+        }
+
+        // Enter product name
+        composeTestRule
+            .onNodeWithTag("productNameField")
+            .performTextInput("Test Product")
+
+        // Enter price
+        composeTestRule
+            .onNodeWithTag("priceField")
+            .performTextInput("99.99")
+
+        // Verify input
+        composeTestRule
+            .onNodeWithTag("productNameField")
+            .assertTextContains("Test Product")
+    }
+    ```
+  </Step>
+
+  <Step title="Add Test Tags to Composables">
+    Add `testTag` modifier to make components testable:
+
+    ```kotlin
+    OutlinedTextField(
+        value = productName,
+        onValueChange = { productName = it },
+        label = { Text("Product Name") },
+        modifier = Modifier.testTag("productNameField")
+    )
+    ```
+  </Step>
+</Steps>
+
+## Testing ViewModels with Flow
+
+Bodeguita's ViewModels use Kotlin Flow. Here's how to test them:
+
+```kotlin
+@Test
+fun `salesViewModel emits sales list`() = runTest {
+    // Given
+    val sales = listOf(
+        Sale(id = 1, total = 100.0, date = "2024-01-01"),
+        Sale(id = 2, total = 200.0, date = "2024-01-02")
+    )
+    coEvery { saleRepository.observeAllSales() } returns flowOf(sales)
+
+    // When
+    val viewModel = SalesViewModel(saleRepository, productDao)
+    testDispatcher.scheduler.advanceUntilIdle()
+
+    // Then
+    val result = viewModel.sales.value
+    assertEquals(2, result.size)
+    assertEquals(100.0, result[0].total, 0.01)
+}
+```
+
+## Testing Repository
+
+Test repositories with a fake DAO:
+
+```kotlin
+@Test
+fun `repository inserts and retrieves product`() = runTest {
+    // Given
+    val fakeDao = FakeProductDao()
+    val repository = ProductRepository(fakeDao)
+    val product = Product(
+        id = 1, 
+        code = "P001", 
+        name = "Test", 
+        price = 10.0
+    )
+
+    // When
+    repository.upsertByCode(product)
+
+    // Then
+    val products = repository.observeAllProducts().first()
+    assertEquals(1, products.size)
+    assertEquals("P001", products[0].code)
+}
+
+class FakeProductDao : ProductDao {
+    private val products = mutableListOf<Product>()
+
+    override fun observeAll(): Flow<List<Product>> = flowOf(products)
+
+    override suspend fun upsertByCode(product: Product) {
+        products.removeIf { it.code == product.code }
+        products.add(product)
+    }
+}
+```
+
+## Testing Best Practices
+
+<Card title="Test Naming Convention" icon="tag">
+  Use descriptive test names: `methodName_stateUnderTest_expectedBehavior`
+
+  ```kotlin
+  @Test
+  fun upsertProduct_withValidProduct_savesSuccessfully()
+  ```
+</Card>
+
+<Card title="AAA Pattern" icon="list-check">
+  Structure tests with Arrange, Act, Assert:
+
+  ```kotlin
+  @Test
+  fun test_example() {
+      // Arrange (Given)
+      val input = setupTestData()
+      
+      // Act (When)
+      val result = performAction(input)
+      
+      // Assert (Then)
+      assertEquals(expected, result)
+  }
+  ```
+</Card>
+
+<Card title="Mock External Dependencies" icon="cube">
+  Mock repositories, DAOs, and external services using MockK:
+
+  ```kotlin
+  val repository = mockk<ProductRepository>()
+  coEvery { repository.getProduct(1) } returns testProduct
+  ```
+</Card>
+
+<Card title="Test One Thing" icon="bullseye">
+  Each test should verify a single behavior or outcome.
+</Card>
+
+<Card title="Use Test Fixtures" icon="wrench">
+  Create reusable test data:
+
+  ```kotlin
+  object ProductFixtures {
+      fun createProduct(id: Int = 1) = Product(
+          id = id,
+          code = "P00$id",
+          name = "Product $id",
+          price = 10.0 * id
+      )
+  }
+  ```
+</Card>
+
+## Running Tests
+
+### From Android Studio
+
+1. Right-click on test file or directory
+2. Select "Run Tests"
+3. View results in the Test Runner panel
+
+### From Command Line
+
+```bash
+# Run all unit tests
+./gradlew test
+
+# Run all instrumented tests
+./gradlew connectedAndroidTest
+
+# Run specific test class
+./gradlew test --tests ProductViewModelTest
+
+# Run tests with coverage
+./gradlew testDebugUnitTestCoverage
+```
+
+### Continuous Integration
+
+Add to your CI pipeline:
+
+```yaml
+# .github/workflows/test.yml
+name: Tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+      - name: Run unit tests
+        run: ./gradlew test
+      - name: Run instrumented tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          script: ./gradlew connectedAndroidTest
+```
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Android Testing" icon="android" href="https://developer.android.com/training/testing">
+    Official Android testing guide
+  </Card>
+  <Card title="Compose Testing" icon="vial" href="https://developer.android.com/jetpack/compose/testing">
+    Jetpack Compose testing documentation
+  </Card>
+  <Card title="MockK" icon="mask" href="https://mockk.io/">
+    Mocking library for Kotlin
+  </Card>
+  <Card title="Coroutine Testing" icon="rotate" href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-test/">
+    Testing Kotlin coroutines
+  </Card>
+</CardGroup>

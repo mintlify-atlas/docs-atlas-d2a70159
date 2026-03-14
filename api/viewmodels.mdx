@@ -1,0 +1,536 @@
+---
+title: 'ViewModels'
+description: 'MVVM presentation logic and state management with Jetpack ViewModels'
+icon: 'layer-group'
+---
+
+## Overview
+
+Bodeguita uses **Android ViewModels** with **Kotlin Flows** for reactive state management following the MVVM (Model-View-ViewModel) architecture pattern. All ViewModels extend `ViewModel` and use coroutines for asynchronous operations.
+
+## State Management Pattern
+
+All ViewModels follow a consistent pattern:
+
+- **StateFlow** for observable state exposed to the UI
+- **SharedFlow** for one-time events (e.g., snackbar messages)
+- **viewModelScope** for coroutine lifecycle management
+- Repository pattern for data access
+
+---
+
+## ProductViewModel
+
+Manages product catalog operations with reactive updates from Room database.
+
+### State Properties
+
+```kotlin
+val products: StateFlow<List<Product>>
+  // Reactive list of all products from Room database
+  // Updates automatically when database changes
+
+val events: SharedFlow<String>
+  // One-time UI events (success/error messages)
+```
+
+### Public Methods
+
+#### `upsertProduct(product: Product)`
+
+Inserts or updates a product by code (UPSERT operation).
+
+```kotlin
+fun upsertProduct(product: Product) = viewModelScope.launch {
+    try {
+        repository.upsertByCode(product)
+        _events.tryEmit("Producto guardado")
+    } catch (e: Exception) {
+        _events.tryEmit("Error al guardar: ${e.message}")
+    }
+}
+```
+
+**Usage in UI:**
+```kotlin
+productViewModel.upsertProduct(
+    Product(
+        name = "Arroz Extra",
+        code = "P001",
+        price = 15.50,
+        stock = 100
+    )
+)
+```
+
+#### `deleteProduct(product: Product)`
+
+Deletes a product from the database.
+
+```kotlin
+fun deleteProduct(product: Product) = viewModelScope.launch {
+    repository.deleteProduct(product)
+}
+```
+
+#### `updateProduct(product: Product)`
+
+Updates an existing product.
+
+```kotlin
+fun updateProduct(product: Product) = viewModelScope.launch {
+    repository.updateProduct(product)
+}
+```
+
+**File location:** `viewmodel/ProductViewModel.kt:15`
+
+---
+
+## SalesViewModel
+
+Manages shopping cart state and sales transactions with real-time total calculation.
+
+### State Properties
+
+```kotlin
+val cart: StateFlow<List<CartItem>>
+  // Current items in the sales cart
+
+val total: StateFlow<Double>
+  // Auto-calculated total from cart items
+  // Updates reactively when cart changes
+
+val events: SharedFlow<String>
+  // UI events (product added, errors, etc.)
+
+val weeklySales: StateFlow<List<DailySaleSummary>>
+  // Sales data for the last 7 days (for charts)
+```
+
+### Cart Operations
+
+#### `addByCodeSafe(code: String, qty: Int)`
+
+Adds a product to cart with validation.
+
+```kotlin
+fun addByCodeSafe(code: String, qty: Int) = viewModelScope.launch {
+    if (code.isBlank()) {
+        _events.tryEmit("Ingresa un código o selecciona un producto")
+        return@launch
+    }
+    if (qty <= 0) {
+        _events.tryEmit("Cantidad inválida (usa un número mayor a 0)")
+        return@launch
+    }
+    try {
+        addByCode(code.trim().uppercase(), qty)
+        _events.tryEmit("Producto agregado")
+    } catch (e: Exception) {
+        _events.tryEmit("No se pudo agregar: ${e.message}")
+    }
+}
+```
+
+#### `changeQty(productId: Int, qty: Int)`
+
+Updates quantity for an item in cart.
+
+```kotlin
+fun changeQty(productId: Int, qty: Int) {
+    _cart.update { list ->
+        list.map {
+            if (it.product.id == productId)
+                it.copy(qty = qty.coerceAtLeast(1))
+            else it
+        }
+    }
+}
+```
+
+#### `remove(productId: Int)`
+
+Removes an item from the cart.
+
+#### `clearCart()`
+
+Empties the entire cart.
+
+#### `finalizeSale()`
+
+Completes the sale transaction.
+
+```kotlin
+fun finalizeSale() = viewModelScope.launch {
+    try {
+        val id = repo.makeSale(_cart.value)
+        clearCart()
+        _events.tryEmit("Venta realizada (#$id)")
+    } catch (e: Exception) {
+        _events.tryEmit(e.message ?: "Error al registrar la venta")
+    }
+}
+```
+
+**File location:** `viewmodel/SalesViewModel.kt:14`
+
+---
+
+## PurchasesViewModel
+
+Manages inventory purchase registration with draft cart and supplier management.
+
+### State Properties
+
+```kotlin
+val suppliers: StateFlow<List<Supplier>>
+  // Available suppliers for dropdown selection
+
+val cart: StateFlow<List<PurchaseRepository.CartItem>>
+  // Purchase cart items
+
+val total: StateFlow<Double>
+  // Auto-calculated purchase total
+
+val draftCart: StateFlow<List<DraftLine>>
+  // Draft items (can create products on-the-fly)
+
+val draftTotal: StateFlow<Double>
+  // Draft cart total
+
+val events: SharedFlow<String>
+```
+
+### Key Methods
+
+#### `addByCode(code: String, qty: Int, cost: Double)`
+
+Adds existing product to purchase cart.
+
+#### `addDraftLine(nameOrCode: String, qty: Int, cost: Double)`
+
+Adds item to draft cart (product may not exist yet).
+
+#### `finalizeDraftPurchase(supplierId: Int)`
+
+Materializes draft products and registers the purchase.
+
+```kotlin
+fun finalizeDraftPurchase(supplierId: Int) = viewModelScope.launch {
+    val drafts = _draftCart.value
+    if (drafts.isEmpty()) {
+        _events.tryEmit("Agrega al menos un producto")
+        return@launch
+    }
+
+    try {
+        val items = mutableListOf<PurchaseRepository.CartItem>()
+
+        for (d in drafts) {
+            val code = d.nameOrCode.trim().uppercase()
+            var p = productDao.findByCode(code)
+
+            if (p == null) {
+                // Create product on-the-fly
+                productDao.insertIgnoreMinimal(
+                    code = code,
+                    name = d.nameOrCode.trim(),
+                    price = d.cost,
+                    stock = 0,
+                    desc = ""
+                )
+                p = productDao.findByCode(code)
+            }
+
+            if (p != null) {
+                items += PurchaseRepository.CartItem(
+                    product = p,
+                    qty = d.qty,
+                    cost = d.cost
+                )
+            }
+        }
+
+        val id = repo.makePurchase(supplierId = supplierId, lines = items)
+        clearDraftCart()
+        _events.tryEmit("Compra registrada (#$id)")
+    } catch (e: Exception) {
+        _events.tryEmit(e.message ?: "Error al registrar compra")
+    }
+}
+```
+
+#### `upsertSupplierByRuc(ruc: String, nombre: String, telefono: String?)`
+
+Creates or updates a supplier.
+
+**File location:** `viewmodel/PurchasesViewModel.kt:14`
+
+---
+
+## DashboardViewModel
+
+Provides real-time dashboard metrics and statistics.
+
+### State Properties
+
+```kotlin
+val todaySalesCount: StateFlow<Int>
+  // Number of sales transactions today
+
+val todayUnitsSold: StateFlow<Int>
+  // Total units sold today (sum of quantities)
+
+val lastSaleBrief: StateFlow<SaleBrief?>
+  // Most recent sale information (id, total, date)
+```
+
+**Usage in Screen:**
+```kotlin
+val todaySales = dashboardViewModel.todaySalesCount.collectAsState(initial = 0).value
+val todayUnits = dashboardViewModel.todayUnitsSold.collectAsState(initial = 0).value
+val lastSale = dashboardViewModel.lastSaleBrief.collectAsState(initial = null).value
+
+DashboardStatsGrid(
+    todaySales = todaySales,
+    todayUnits = todayUnits,
+    lastSale = lastSale,
+    totalProducts = products.size
+)
+```
+
+**File location:** `viewmodel/DashboardViewModel.kt:11`
+
+---
+
+## CashClosureViewModel
+
+Manages daily cash closure operations with financial calculations and CSV export.
+
+### State Properties
+
+```kotlin
+val salesTotal: StateFlow<Double>
+  // Total sales revenue today
+
+val salesCount: StateFlow<Int>
+  // Number of sales today
+
+val purchasesTotal: StateFlow<Double>
+  // Total purchases cost today
+
+val netIncome: StateFlow<Double>
+  // Calculated: salesTotal - purchasesTotal
+
+val avgTicket: StateFlow<Double>
+  // Calculated: salesTotal / salesCount
+
+val movementsToday: StateFlow<List<MovimientoInventario>>
+  // Inventory movements for today
+```
+
+### Methods
+
+#### `resetDay(onDone: () -> Unit)`
+
+Clears today's sales, purchases, and movements.
+
+```kotlin
+fun resetDay(onDone: () -> Unit) = viewModelScope.launch {
+    saleDao.deleteTodaySales()
+    purchaseDao.deleteTodayPurchases()
+    movementDao.deleteTodayMovements()
+    onDone()
+}
+```
+
+#### `generateReport(context: Context, onDone: (Uri?) -> Unit)`
+
+Generates CSV report for sharing.
+
+```kotlin
+fun generateReport(context: Context, onDone: (Uri?) -> Unit) = viewModelScope.launch {
+    try {
+        val fileName = "reporte_cierre.csv"
+        val file = File(context.cacheDir, fileName)
+
+        val csvData = buildString {
+            append("Total Ventas,${salesTotal.value}\n")
+            append("Total Compras,${purchasesTotal.value}\n")
+            append("Ganancia Neta,${netIncome.value}\n")
+            append("Cantidad de Ventas,${salesCount.value}\n")
+            append("Ticket Promedio,${avgTicket.value}\n")
+        }
+
+        FileOutputStream(file).use { it.write(csvData.toByteArray()) }
+
+        val uri: Uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+
+        onDone(uri)
+    } catch (e: Exception) {
+        onDone(null)
+    }
+}
+```
+
+**File location:** `viewmodel/CashClosureViewModel.kt:17`
+
+---
+
+## CategoryViewModel
+
+Manages product categories with simple CRUD operations.
+
+### State Properties
+
+```kotlin
+val categories: StateFlow<List<Category>>
+  // Observable list of all categories
+```
+
+### Methods
+
+```kotlin
+fun add(nombre: String) = viewModelScope.launch {
+    repo.add(nombre)
+}
+
+fun delete(id: Long) = viewModelScope.launch {
+    repo.delete(id)
+}
+```
+
+**File location:** `viewmodel/CategoryViewModel.kt:11`
+
+---
+
+## SupplierViewModel
+
+Manages supplier information with reactive updates.
+
+### State Properties
+
+```kotlin
+val suppliers: StateFlow<List<Supplier>>
+  // Observable list of all suppliers
+
+val events: SharedFlow<String>
+  // UI event messages
+```
+
+### Methods
+
+#### `addSupplier(ruc: String, nombre: String, telefono: String?)`
+
+Creates a new supplier with validation.
+
+```kotlin
+fun addSupplier(ruc: String, nombre: String, telefono: String?) = viewModelScope.launch {
+    val r = ruc.trim()
+    val n = nombre.trim()
+    val t = telefono?.trim().takeUnless { it.isNullOrBlank() }
+
+    if (r.isBlank() || n.isBlank()) {
+        _events.tryEmit("RUC y nombre son obligatorios")
+        return@launch
+    }
+
+    val id = supplierDao.insertIgnore(Supplier(ruc = r, nombre = n, telefono = t))
+    if (id == -1L) _events.tryEmit("El proveedor ya existe (RUC o nombre)")
+    else _events.tryEmit("Proveedor agregado")
+}
+```
+
+#### `renameSupplier(id: Int, nuevoNombre: String)`
+
+Updates supplier name.
+
+#### `deleteSupplier(supplier: Supplier)`
+
+Deletes a supplier.
+
+**File location:** `viewmodel/SupplierViewModel.kt:11`
+
+---
+
+## ViewModelFactory Pattern
+
+Bodeguita uses Factory pattern for ViewModel creation with repository dependencies.
+
+### Example: ProductViewModelFactory
+
+```kotlin
+class ProductViewModelFactory(
+    private val repository: ProductRepository
+) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(ProductViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return ProductViewModel(repository) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
+```
+
+### Usage in Activity/Fragment
+
+```kotlin
+val productRepository = ProductRepository(database.productDao())
+val productViewModel: ProductViewModel by viewModels {
+    ProductViewModelFactory(productRepository)
+}
+```
+
+**Similar factories exist for:**
+- `SalesViewModelFactory`
+- `PurchasesViewModelFactory`
+- `DashboardViewModelFactory`
+- `CashClosureViewModelFactory`
+- `CategoryViewModelFactory`
+- `SupplierViewModelFactory`
+
+**File location:** `viewmodel/ProductViewModelFactory.kt:7`
+
+---
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="StateFlow for State" icon="database">
+    Use `StateFlow` for observable state that the UI can collect and react to automatically.
+  </Card>
+  
+  <Card title="SharedFlow for Events" icon="bolt">
+    Use `SharedFlow` for one-time events like snackbar messages that shouldn't be replayed.
+  </Card>
+  
+  <Card title="viewModelScope" icon="sync">
+    Always launch coroutines in `viewModelScope` for automatic cancellation when ViewModel is cleared.
+  </Card>
+  
+  <Card title="Validation" icon="shield-check">
+    Perform input validation in ViewModel before repository calls to provide user feedback.
+  </Card>
+</CardGroup>
+
+## Related Documentation
+
+<CardGroup cols={3}>
+  <Card title="Screens" icon="window" href="/api/screens">
+    Jetpack Compose UI screens
+  </Card>
+  
+  <Card title="Components" icon="puzzle-piece" href="/api/components">
+    Reusable UI components
+  </Card>
+  
+  <Card title="Repositories" icon="folder-open" href="/api/repositories">
+    Data access layer
+  </Card>
+</CardGroup>

@@ -1,0 +1,164 @@
+---
+title: Introduction to Bodeguita
+description: A comprehensive mobile application for managing sales, purchases, products, suppliers, and cash closure for local stores
+---
+
+## What is Bodeguita?
+
+Bodeguita is a mobile application developed in **Android Studio with Kotlin and Jetpack Compose** that enables **management of sales, purchases, products, suppliers, and cash closure** for local stores. The application uses **Room** as its local database and follows the **MVVM architecture** for clean, scalable, and maintainable code.
+
+<Info>
+Bodeguita is designed specifically for small to medium-sized retail stores looking to digitize their inventory and sales management processes.
+</Info>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Product Management" icon="box">
+    Register, edit, and delete products with category assignment, stock tracking, and intelligent search capabilities by name or category.
+  </Card>
+  
+  <Card title="Sales Module" icon="shopping-cart">
+    Record sales with multiple products, automatic calculation of subtotals, taxes, and total amounts with real-time inventory control.
+  </Card>
+  
+  <Card title="Purchase Management" icon="cart-shopping">
+    Register purchases from suppliers, add multiple products per purchase, and automatic stock updates with total cost calculation.
+  </Card>
+  
+  <Card title="Cash Closure" icon="money-bill">
+    Generate daily summaries of sales and purchases with automatic calculation of income, expenses, and net profit.
+  </Card>
+  
+  <Card title="Supplier Management" icon="users">
+    Maintain supplier information and link them directly to purchase transactions for better tracking.
+  </Card>
+  
+  <Card title="Dashboard Analytics" icon="chart-line">
+    Visualize store statistics with sales totals, purchase summaries, active products count, and quick access to all modules.
+  </Card>
+</CardGroup>
+
+## Technology Stack
+
+Bodeguita is built with modern Android development technologies:
+
+- **Language**: Kotlin
+- **UI Framework**: Jetpack Compose with Material Design 3
+- **Database**: Room (SQLite)
+- **Architecture**: MVVM (Model-View-ViewModel)
+- **Navigation**: Jetpack Navigation Compose
+- **Charts**: Vico library for data visualization
+- **Minimum SDK**: Android 7.1 (API 25)
+- **Target SDK**: Android 14 (API 36)
+
+```kotlin app/build.gradle.kts
+android {
+    namespace = "com.trabajo.minitienda"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "com.trabajo.minitienda"
+        minSdk = 25
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0"
+    }
+}
+```
+
+## Core Architecture
+
+The application follows a clean MVVM architecture pattern:
+
+```kotlin app/src/main/java/com/trabajo/minitienda/data/database/AppDatabase.kt
+@Database(
+    entities = [
+        Product::class,
+        Category::class,
+        Sale::class,
+        SaleDetail::class,
+        Supplier::class,
+        Purchase::class,
+        PurchaseDetail::class,
+        MovimientoInventario::class
+    ],
+    version = 8,
+    exportSchema = true
+)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun productDao(): ProductDao
+    abstract fun categoryDao(): CategoryDao
+    abstract fun saleDao(): SaleDao
+    abstract fun supplierDao(): SupplierDao
+    abstract fun purchaseDao(): PurchaseDao
+    abstract fun movementDao(): MovementDao
+}
+```
+
+<Note>
+The database uses Room's migration strategy with `fallbackToDestructiveMigration()` for development flexibility.
+</Note>
+
+## Development Team
+
+Bodeguita was developed collaboratively by:
+
+| Role | Name | Responsibilities |
+|------|------|------------------|
+| **Developer & Designer** | David Carhuaz | Implementation of application logic (Room, ViewModels, Navigation), interface design with Jetpack Compose, and project structuring |
+| **Developer & Designer** | Betuel Arones | Development of business logic and data flow, visual design and screen layout support, functionality testing and interface improvements |
+
+<Info>
+Both team members participated collaboratively in:
+- Designing the **MVVM architecture**
+- Creating the **main modules**: products, sales, purchases, suppliers, and cash closure
+- Building screens and integrating **Material Design 3**
+- Functionality testing and bug fixing
+</Info>
+
+## Main Modules
+
+### Products Module
+- Register, edit, and delete products
+- Assign categories to each product
+- Display available stock and current price
+- Product search by name or category
+
+### Purchases Module
+- Register purchases from suppliers
+- Add multiple products in a single purchase
+- Automatically calculate total cost
+- Update stock for purchased products
+
+### Sales Module
+- Register sales with multiple products
+- Calculate subtotal, taxes, and total amount
+- Control inventory when making a sale
+- View sales history with date and time
+
+### Cash Closure
+- Display daily summary of sales and purchases
+- Calculate income, expenses, and net profit
+- Record the final amount of the day (cash register)
+
+### Suppliers Module
+- Register and maintain supplier information
+- Link suppliers with purchases made
+
+### Dashboard
+- Visualize summarized store statistics
+- Show totals for sales, purchases, and active products
+- Quick access to main modules
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Learn how to install and set up Bodeguita on your Android device
+  </Card>
+  
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get started with Bodeguita in minutes
+  </Card>
+</CardGroup>

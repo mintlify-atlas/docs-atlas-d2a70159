@@ -1,0 +1,525 @@
+---
+title: "Supplier Management"
+description: "Manage supplier information and relationships"
+---
+
+Supplier Management enables store owners to maintain a database of suppliers (proveedores) with unique tax IDs, contact information, and automatic linking to purchases.
+
+## Overview
+
+Suppliers are critical for the purchase workflow in Bodeguita. Every purchase must be linked to a supplier, creating a complete audit trail of inventory sources.
+
+### Key Features
+
+- **Unique supplier identification** by RUC (tax ID) and name
+- **Contact information** storage (phone numbers)
+- **Quick creation** from purchase screen
+- **Full CRUD operations** through dedicated management dialogs
+- **Automatic linking** to purchase records
+- **Reactive updates** across all screens
+
+## Data Model
+
+Suppliers are stored in Room with unique constraints:
+
+```kotlin
+// Supplier.kt
+@Entity(
+    tableName = "proveedor",
+    indices = [
+        Index(value = ["ruc"], unique = true),
+        Index(value = ["nombre"], unique = true)
+    ]
+)
+data class Supplier(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val ruc: String,        // Tax ID - must be unique
+    val nombre: String,     // Name - must be unique
+    val telefono: String? = null  // Optional phone number
+)
+```
+
+<Warning>
+  Both `ruc` (tax ID) and `nombre` (name) have **unique constraints**. Attempting to insert a duplicate will fail silently with `insertIgnore` returning `-1`.
+</Warning>
+
+### Database Indices
+
+<CardGroup cols={2}>
+  <Card title="RUC Index" icon="fingerprint">
+    Unique index on tax ID for fast supplier lookup by government ID
+  </Card>
+  <Card title="Name Index" icon="tag">
+    Unique index on name to prevent duplicate supplier entries
+  </Card>
+</CardGroup>
+
+## SupplierViewModel
+
+The ViewModel provides reactive supplier management:
+
+```kotlin
+// SupplierViewModel.kt
+class SupplierViewModel(
+    private val supplierDao: SupplierDao
+) : ViewModel() {
+
+    // Reactive supplier list from Room
+    val suppliers: StateFlow<List<Supplier>> =
+        supplierDao.observeAll()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    // Event channel for UI feedback
+    private val _events = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val events: SharedFlow<String> = _events.asSharedFlow()
+
+    /** Create supplier (if already exists by RUC or name, insertIgnore returns -1) */
+    fun addSupplier(ruc: String, nombre: String, telefono: String?) = viewModelScope.launch {
+        val r = ruc.trim()
+        val n = nombre.trim()
+        val t = telefono?.trim().takeUnless { it.isNullOrBlank() }
+
+        if (r.isBlank() || n.isBlank()) {
+            _events.tryEmit("RUC y nombre son obligatorios")
+            return@launch
+        }
+
+        val id = supplierDao.insertIgnore(Supplier(ruc = r, nombre = n, telefono = t))
+        if (id == -1L) _events.tryEmit("El proveedor ya existe (RUC o nombre)")
+        else _events.tryEmit("Proveedor agregado")
+    }
+
+    /** Rename supplier by id */
+    fun renameSupplier(id: Int, nuevoNombre: String) = viewModelScope.launch {
+        val nuevo = nuevoNombre.trim()
+        if (nuevo.isBlank()) return@launch
+        supplierDao.rename(id, nuevo)
+        _events.tryEmit("Proveedor actualizado")
+    }
+
+    /** Delete supplier */
+    fun deleteSupplier(supplier: Supplier) = viewModelScope.launch {
+        supplierDao.delete(supplier)
+        _events.tryEmit("Proveedor eliminado")
+    }
+}
+```
+
+### StateFlow Pattern
+
+```kotlin
+// SupplierViewModel.kt:16
+val suppliers: StateFlow<List<Supplier>> =
+    supplierDao.observeAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+```
+
+<Info>
+  The suppliers list is a **hot flow** that automatically updates all UI components when suppliers are added, renamed, or deleted. The `WhileSubscribed(5_000)` sharing strategy stops upstream Room queries 5 seconds after the last collector unsubscribes, optimizing resources.
+</Info>
+
+## CRUD Operations
+
+### Create Supplier
+
+<Steps>
+  <Step title="Validate Input">
+    ```kotlin
+    // SupplierViewModel.kt:24
+    fun addSupplier(ruc: String, nombre: String, telefono: String?) = viewModelScope.launch {
+        val r = ruc.trim()
+        val n = nombre.trim()
+        val t = telefono?.trim().takeUnless { it.isNullOrBlank() }
+
+        if (r.isBlank() || n.isBlank()) {
+            _events.tryEmit("RUC y nombre son obligatorios")
+            return@launch
+        }
+    ```
+
+    Both RUC and name are **required fields**. Phone is optional.
+  </Step>
+
+  <Step title="Insert with Conflict Handling">
+    ```kotlin
+    // SupplierViewModel.kt:34
+    val id = supplierDao.insertIgnore(Supplier(ruc = r, nombre = n, telefono = t))
+    if (id == -1L) _events.tryEmit("El proveedor ya existe (RUC o nombre)")
+    else _events.tryEmit("Proveedor agregado")
+    ```
+
+    `insertIgnore` returns:
+    - New supplier ID if successful
+    - `-1` if a conflict occurred (duplicate RUC or name)
+  </Step>
+
+  <Step title="Emit Event">
+    The ViewModel emits success or error messages through the `_events` channel, which UI components can collect to show snackbars.
+  </Step>
+</Steps>
+
+### Read Suppliers
+
+Suppliers are observed reactively:
+
+```kotlin
+// In any Composable
+val suppliers by supplierViewModel.suppliers.collectAsState()
+
+// suppliers is automatically updated when data changes
+LazyColumn {
+    items(suppliers) { supplier ->
+        SupplierCard(supplier)
+    }
+}
+```
+
+### Update Supplier
+
+Currently supports renaming:
+
+```kotlin
+// SupplierViewModel.kt:40
+fun renameSupplier(id: Int, nuevoNombre: String) = viewModelScope.launch {
+    val nuevo = nuevoNombre.trim()
+    if (nuevo.isBlank()) return@launch
+    supplierDao.rename(id, nuevo)
+    _events.tryEmit("Proveedor actualizado")
+}
+```
+
+<Note>
+  Currently only the supplier name can be updated. To change RUC or phone, you would need to delete and recreate the supplier (this preserves purchase history integrity).
+</Note>
+
+### Delete Supplier
+
+```kotlin
+// SupplierViewModel.kt:48
+fun deleteSupplier(supplier: Supplier) = viewModelScope.launch {
+    supplierDao.delete(supplier)
+    _events.tryEmit("Proveedor eliminado")
+}
+```
+
+<Warning>
+  **Foreign Key Constraint**: If a supplier has associated purchases, deletion behavior depends on the foreign key configuration in the Purchase entity. Typically, you should **not allow** deleting suppliers with existing purchases to maintain data integrity.
+</Warning>
+
+## Quick Create Dialog
+
+Suppliers can be created on-the-fly from the Purchases screen:
+
+```kotlin
+// PurchasesScreen.kt:329
+@Composable
+private fun SupplierManagerDialog(
+    onDismiss: () -> Unit,
+    onSave: (ruc: String, nombre: String, telefono: String?) -> Unit
+) {
+    var ruc by remember { mutableStateOf("") }
+    var nombre by remember { mutableStateOf("") }
+    var telefono by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Gestionar Proveedor") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = ruc,
+                    onValueChange = { ruc = it },
+                    label = { Text("RUC") }
+                )
+                OutlinedTextField(
+                    value = nombre,
+                    onValueChange = { nombre = it },
+                    label = { Text("Nombre") }
+                )
+                OutlinedTextField(
+                    value = telefono,
+                    onValueChange = { telefono = it },
+                    label = { Text("Teléfono") }
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onSave(ruc, nombre, telefono.ifBlank { null })
+                onDismiss()
+            }) { Text("Guardar") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cerrar") }
+        }
+    )
+}
+```
+
+### Integration in Purchases
+
+```kotlin
+// PurchasesScreen.kt:67
+Row(
+    modifier = Modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.SpaceBetween,
+    verticalAlignment = Alignment.CenterVertically
+) {
+    Text("Proveedor", style = MaterialTheme.typography.titleMedium)
+    TextButton(onClick = { showSupplierManager = true }) {
+        Text("Gestionar")
+    }
+}
+
+// Later in the composable:
+if (showSupplierManager) {
+    SupplierManagerDialog(
+        onDismiss = { showSupplierManager = false },
+        onSave = { ruc, nombre, telefono ->
+            purchasesVM.upsertSupplierByRuc(ruc, nombre, telefono)
+        }
+    )
+}
+```
+
+### PurchasesViewModel Integration
+
+```kotlin
+// PurchasesViewModel.kt:62
+fun upsertSupplierByRuc(ruc: String, nombre: String, telefono: String?) = viewModelScope.launch {
+    val r = ruc.trim()
+    val n = nombre.trim()
+    val t = telefono?.trim().takeUnless { it.isNullOrBlank() }
+
+    if (r.isBlank() || n.isBlank()) {
+        _events.tryEmit("RUC y nombre son obligatorios")
+        return@launch
+    }
+
+    val id = supplierDao.insertIgnore(Supplier(ruc = r, nombre = n, telefono = t))
+    if (id == -1L) {
+        _events.tryEmit("El proveedor ya existe")
+    } else {
+        _events.tryEmit("Proveedor guardado")
+    }
+}
+```
+
+## Supplier Selection UI
+
+Suppliers are selected using ExposedDropdownMenuBox:
+
+```kotlin
+// PurchasesScreen.kt:75
+var selectedSupplierIdx by remember { mutableStateOf(-1) }
+val selectedSupplier = suppliers.getOrNull(selectedSupplierIdx)
+
+var expanded by remember { mutableStateOf(false) }
+
+ExposedDropdownMenuBox(
+    expanded = expanded,
+    onExpandedChange = { expanded = !expanded }
+) {
+    OutlinedTextField(
+        modifier = Modifier.menuAnchor().fillMaxWidth(),
+        value = selectedSupplier?.nombre ?: "",
+        onValueChange = {},
+        readOnly = true,
+        label = { Text("Selecciona un proveedor") },
+        trailingIcon = {
+            ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+        },
+        singleLine = true
+    )
+
+    ExposedDropdownMenu(
+        expanded = expanded,
+        onDismissRequest = { expanded = false }
+    ) {
+        suppliers.forEachIndexed { index, s ->
+            DropdownMenuItem(
+                text = { Text("${s.nombre}  —  ${s.ruc}") },
+                onClick = {
+                    selectedSupplierIdx = index
+                    expanded = false
+                }
+            )
+        }
+    }
+}
+```
+
+<Info>
+  The dropdown displays both supplier **name** and **RUC** for easy identification: "Distribuidora ABC — 20123456789"
+</Info>
+
+## Supplier Fields
+
+<CardGroup cols={3}>
+  <Card title="RUC" icon="fingerprint">
+    **Required**. Peruvian tax identification number. Must be unique across all suppliers.
+  </Card>
+  <Card title="Nombre" icon="building">
+    **Required**. Supplier company or individual name. Must be unique.
+  </Card>
+  <Card title="Teléfono" icon="phone">
+    **Optional**. Contact phone number for the supplier.
+  </Card>
+</CardGroup>
+
+### Field Validation
+
+```kotlin
+// SupplierViewModel.kt:25
+val r = ruc.trim()
+val n = nombre.trim()
+val t = telefono?.trim().takeUnless { it.isNullOrBlank() }
+
+if (r.isBlank() || n.isBlank()) {
+    _events.tryEmit("RUC y nombre son obligatorios")
+    return@launch
+}
+```
+
+<Steps>
+  <Step title="Trim Whitespace">
+    All fields are trimmed to remove leading/trailing spaces
+  </Step>
+
+  <Step title="Check Required Fields">
+    RUC and nombre must not be blank after trimming
+  </Step>
+
+  <Step title="Handle Optional Phone">
+    If phone is blank after trimming, it's stored as `null` instead of empty string
+  </Step>
+</Steps>
+
+## Linking Suppliers to Purchases
+
+Every purchase record stores the supplier ID:
+
+```kotlin
+// When finalizing a purchase:
+val supplier = selectedSupplier
+when {
+    supplier == null ->
+        scope.launch { snackbar.showSnackbar("Selecciona un proveedor") }
+    cart.isEmpty() ->
+        scope.launch { snackbar.showSnackbar("Agrega al menos un producto") }
+    else -> {
+        purchasesVM.finalizeDraftPurchase(supplier.id)  // Pass supplier ID
+        scope.launch { snackbar.showSnackbar("Compra registrada") }
+    }
+}
+```
+
+The repository creates the purchase with supplier reference:
+
+```kotlin
+// PurchaseRepository
+fun makePurchase(supplierId: Int, lines: List<CartItem>) {
+    // Insert purchase record with supplierId
+    // Insert detail lines
+    // Update stock
+    // Record movements
+}
+```
+
+## Best Practices
+
+<Warning>
+  **RUC Format**: The system doesn't validate RUC format. In production, you should validate that it matches the Peruvian RUC format (11 digits, specific prefixes, etc.).
+</Warning>
+
+<Note>
+  **Duplicate Prevention**: The unique constraints on RUC and nombre prevent accidental duplicates. Always use `insertIgnore` and check for `-1` return value to handle conflicts gracefully.
+</Note>
+
+<Info>
+  **Reactive Updates**: When a supplier is created in the quick dialog, all dropdowns and lists automatically update via StateFlow, so users see the new supplier immediately.
+</Info>
+
+### Recommended Workflow
+
+<Steps>
+  <Step title="Verify Supplier Existence">
+    Before creating a purchase, check if the supplier exists in the dropdown
+  </Step>
+
+  <Step title="Create if Missing">
+    Click "Gestionar" to open the quick create dialog
+  </Step>
+
+  <Step title="Enter Complete Information">
+    Provide RUC, name, and phone (optional but recommended)
+  </Step>
+
+  <Step title="Save and Select">
+    After saving, the new supplier appears in the dropdown automatically
+  </Step>
+
+  <Step title="Complete Purchase">
+    Select the supplier and proceed with adding products
+  </Step>
+</Steps>
+
+## Event-Driven Feedback
+
+The ViewModel emits events that UI components can display:
+
+```kotlin
+// In a Composable:
+val snackbar = remember { SnackbarHostState() }
+
+LaunchedEffect(Unit) {
+    supplierViewModel.events.collect { message ->
+        snackbar.showSnackbar(message)
+    }
+}
+```
+
+### Event Types
+
+<CardGroup cols={2}>
+  <Card title="Success Events" icon="circle-check" color="#16a34a">
+    - "Proveedor agregado"
+    - "Proveedor actualizado"
+    - "Proveedor eliminado"
+  </Card>
+  <Card title="Error Events" icon="circle-exclamation" color="#dc2626">
+    - "RUC y nombre son obligatorios"
+    - "El proveedor ya existe (RUC o nombre)"
+  </Card>
+</CardGroup>
+
+## SupplierDao Interface
+
+The DAO provides database operations:
+
+```kotlin
+@Dao
+interface SupplierDao {
+    @Query("SELECT * FROM proveedor ORDER BY nombre ASC")
+    fun observeAll(): Flow<List<Supplier>>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(supplier: Supplier): Long
+
+    @Query("UPDATE proveedor SET nombre = :nuevoNombre WHERE id = :id")
+    suspend fun rename(id: Int, nuevoNombre: String)
+
+    @Delete
+    suspend fun delete(supplier: Supplier)
+}
+```
+
+<Info>
+  The `observeAll()` query returns suppliers **alphabetically sorted by name** for consistent dropdown ordering.
+</Info>
+
+## Related Components
+
+- [Purchase Management](/features/purchases) - Suppliers are required for all purchases
+- [Dashboard](/features/dashboard) - May show top suppliers or purchase metrics
+- [Cash Closure](/features/cash-closure) - Purchases from suppliers count as expenses

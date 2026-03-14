@@ -1,0 +1,578 @@
+---
+title: "Sales Management"
+description: "Record sales with automatic inventory updates"
+---
+
+The Sales Management module enables quick sale registration with shopping cart functionality, multi-product support, automatic inventory updates, and real-time price calculations including tax.
+
+## Overview
+
+SalesScreen provides a complete point-of-sale interface with:
+- **Shopping cart** with add/remove functionality
+- **Product lookup** by code or search
+- **Multi-product sales** with quantity control
+- **Automatic inventory deduction** on sale completion
+- **Tax calculation** (18% IGV)
+- **Responsive layout** for various screen sizes
+
+## Data Model
+
+Sales use a master-detail pattern with Room:
+
+```kotlin
+// Sale.kt
+@Entity(tableName = "venta")
+data class Sale(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val fecha: Long = System.currentTimeMillis(),
+    val total: Double
+)
+
+@Entity(
+    tableName = "detalle_venta",
+    primaryKeys = ["sale_id", "product_id"],
+    foreignKeys = [
+        ForeignKey(
+            entity = Sale::class,
+            parentColumns = ["id"],
+            childColumns = ["sale_id"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = Product::class,
+            parentColumns = ["id"],
+            childColumns = ["product_id"],
+            onDelete = ForeignKey.RESTRICT
+        )
+    ]
+)
+data class SaleDetail(
+    @ColumnInfo(name = "sale_id") val saleId: Long,
+    @ColumnInfo(name = "product_id") val productId: Int,
+    val cantidad: Int,
+    @ColumnInfo(name = "precio_unit") val precioUnit: Double,
+    val subtotal: Double
+)
+```
+
+<Note>
+  Sales use **CASCADE** delete: deleting a sale removes all its detail rows. Products use **RESTRICT**: you cannot delete a product that has been sold.
+</Note>
+
+## Shopping Cart Architecture
+
+The cart is managed entirely in the ViewModel using StateFlow:
+
+```kotlin
+// SalesViewModel.kt:19
+private val _cart = MutableStateFlow<List<CartItem>>(emptyList())
+val cart: StateFlow<List<CartItem>> = _cart.asStateFlow()
+
+val total: StateFlow<Double> = cart
+    .map { items -> items.sumOf { it.product.price * it.qty } }
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0.0)
+```
+
+### CartItem Structure
+
+```kotlin
+// SaleRepository.kt
+data class CartItem(
+    val product: Product,
+    val qty: Int
+)
+```
+
+## Sales Screen Layout
+
+The screen adapts to wide and narrow layouts:
+
+```kotlin
+// SalesScreen.kt:73
+BoxWithConstraints(Modifier.fillMaxSize()) {
+    val isWide = maxWidth >= 600.dp
+
+    if (isWide) {
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Column(Modifier.weight(2f)) { leftPane() }   // Product selection
+            Column(Modifier.weight(1f)) { rightPane() }  // Summary
+        }
+    } else {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            leftPane()   // Product selection on top
+            rightPane()  // Summary below
+        }
+    }
+}
+```
+
+<CardGroup cols={2}>
+  <Card title="Wide Layout" icon="display">
+    Side-by-side: Product selection (left) and Summary (right)
+  </Card>
+  <Card title="Narrow Layout" icon="mobile">
+    Stacked: Product selection above Summary
+  </Card>
+</CardGroup>
+
+## Adding Products to Cart
+
+### Product Selector with Search
+
+```kotlin
+// SalesScreen.kt:85
+var productQuery by remember { mutableStateOf("") }
+var menuExpanded by remember { mutableStateOf(false) }
+
+val filtered: List<Product> = remember(productQuery, products) {
+    if (productQuery.isBlank()) products.take(12)
+    else products.filter {
+        it.name.contains(productQuery, ignoreCase = true) ||
+        it.code.contains(productQuery, ignoreCase = true)
+    }.take(12)
+}
+
+ExposedDropdownMenuBox(
+    expanded = menuExpanded,
+    onExpandedChange = { menuExpanded = !menuExpanded }
+) {
+    OutlinedTextField(
+        value = productQuery,
+        onValueChange = {
+            productQuery = it
+            menuExpanded = true
+        },
+        label = { Text("Producto") },
+        placeholder = { Text("Selecciona o escribe…") },
+        modifier = Modifier
+            .menuAnchor()
+            .fillMaxWidth(),
+        singleLine = true,
+        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = menuExpanded) }
+    )
+
+    ExposedDropdownMenu(
+        expanded = menuExpanded,
+        onDismissRequest = { menuExpanded = false }
+    ) {
+        if (filtered.isEmpty()) {
+            DropdownMenuItem(
+                text = { Text("Sin resultados") },
+                onClick = { menuExpanded = false }
+            )
+        } else {
+            filtered.forEach { p ->
+                DropdownMenuItem(
+                    text = { Text("${p.name}  —  ${p.code}") },
+                    onClick = {
+                        code = p.code
+                        productQuery = p.name
+                        menuExpanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+```
+
+### Add to Cart with Code Entry
+
+<Steps>
+  <Step title="Input Fields">
+    ```kotlin
+    // SalesScreen.kt:140
+    var code by remember { mutableStateOf("") }
+    var qtyTxt by remember { mutableStateOf("1") }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        OutlinedTextField(
+            value = code,
+            onValueChange = { code = it },
+            label = { Text("Código") },
+            modifier = Modifier.weight(1f),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii)
+        )
+        OutlinedTextField(
+            value = qtyTxt,
+            onValueChange = { qtyTxt = it },
+            label = { Text("Cantidad") },
+            modifier = Modifier.widthIn(min = 96.dp),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
+        Button(
+            onClick = {
+                val q = qtyTxt.toIntOrNull() ?: -1
+                vm.addByCodeSafe(code, q)
+                code = ""
+                productQuery = ""
+                qtyTxt = "1"
+            },
+            modifier = Modifier.height(48.dp).widthIn(min = 140.dp)
+        ) {
+            Icon(Icons.Default.Add, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Agregar")
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="ViewModel Logic">
+    ```kotlin
+    // SalesViewModel.kt:51
+    fun addByCodeSafe(code: String, qty: Int) = viewModelScope.launch {
+        // Validation
+        if (code.isBlank()) {
+            _events.tryEmit("Ingresa un código o selecciona un producto")
+            return@launch
+        }
+        if (qty <= 0) {
+            _events.tryEmit("Cantidad inválida (usa un número mayor a 0)")
+            return@launch
+        }
+        try {
+            addByCode(code.trim().uppercase(), qty)
+            _events.tryEmit("Producto agregado")
+        } catch (e: Exception) {
+            _events.tryEmit("No se pudo agregar: ${e.message ?: "error desconocido"}")
+        }
+    }
+
+    fun addByCode(code: String, qty: Int) = viewModelScope.launch {
+        val p = productDao.findByCode(code.trim().uppercase())
+        if (p == null) {
+            _events.tryEmit("Código no encontrado")
+            return@launch
+        }
+        if (qty <= 0) {
+            _events.tryEmit("Cantidad inválida")
+            return@launch
+        }
+
+        val current = _cart.value.toMutableList()
+        val index = current.indexOfFirst { it.product.id == p.id }
+        if (index >= 0) {
+            // Update existing line
+            val old = current[index]
+            current[index] = old.copy(qty = old.qty + qty)
+        } else {
+            // Add new line
+            current += CartItem(p, qty)
+        }
+        _cart.value = current
+    }
+    ```
+  </Step>
+</Steps>
+
+<Info>
+  If you add the same product multiple times, the quantities are **accumulated** in a single cart line rather than creating duplicate entries.
+</Info>
+
+## Cart Display
+
+The cart shows all added products with remove functionality:
+
+```kotlin
+// SalesScreen.kt:221
+AppCard(Modifier.fillMaxWidth()) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Productos en la Venta", style = MaterialTheme.typography.titleMedium)
+
+        if (cart.isEmpty()) {
+            Box(
+                Modifier.fillMaxWidth().height(120.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("El carrito está vacío", color = SecondaryText)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 0.dp, max = 320.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(cart, key = { it.product.id }) { line ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(line.product.name, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "${line.qty} × S/ ${fmt(line.product.price)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SecondaryText
+                            )
+                        }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("S/ ${fmt(line.product.price * line.qty)}")
+                            IconButton(onClick = { vm.remove(line.product.id) }) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "Quitar",
+                                    tint = ErrorColor
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+### Remove Item from Cart
+
+```kotlin
+// SalesViewModel.kt:74
+fun remove(productId: Int) {
+    _cart.update { list -> list.filterNot { it.product.id == productId } }
+}
+```
+
+## Sale Summary Panel
+
+Displays calculated totals including tax:
+
+```kotlin
+// SalesScreen.kt:281
+AppCard(Modifier.fillMaxWidth()) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text("Resumen de Venta", style = MaterialTheme.typography.titleMedium)
+
+        val subtotal = cart.sumOf { it.product.price * it.qty }
+        val igv = subtotal * 0.18
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SummaryRow("Productos", cart.size.toString())
+            SummaryRow("Unidades", cart.sumOf { it.qty }.toString())
+            Divider()
+            SummaryRow("Subtotal", "S/ ${fmt(subtotal)}")
+            SummaryRow("IGV (18%)", "S/ ${fmt(igv)}")
+            Divider()
+            SummaryRow(
+                "Total",
+                "S/ ${fmt(total)}",
+                style = MaterialTheme.typography.titleLarge
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            OutlinedButton(
+                onClick = { vm.clearCart() },
+                modifier = Modifier.weight(1f).height(48.dp),
+                enabled = cart.isNotEmpty()
+            ) { Text("Cancelar") }
+
+            Button(
+                onClick = { vm.finalizeSale() },
+                modifier = Modifier.weight(1f).height(48.dp),
+                enabled = cart.isNotEmpty()
+            ) {
+                Icon(Icons.Default.Check, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Registrar Venta")
+            }
+        }
+    }
+}
+```
+
+### Summary Row Component
+
+```kotlin
+// SalesScreen.kt:364
+@Composable
+private fun SummaryRow(
+    label: String,
+    value: String,
+    style: TextStyle = MaterialTheme.typography.bodyMedium
+) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, style = style)
+        Text(value, style = style)
+    }
+}
+```
+
+## Finalizing the Sale
+
+The sale is persisted with automatic inventory updates:
+
+```kotlin
+// SalesViewModel.kt:80
+fun finalizeSale() = viewModelScope.launch {
+    try {
+        val id = repo.makeSale(_cart.value)
+        clearCart()
+        _events.tryEmit("Venta realizada (#$id)")
+    } catch (e: Exception) {
+        _events.tryEmit(e.message ?: "Error al registrar la venta")
+    }
+}
+```
+
+### Repository Transaction
+
+The repository handles the complete transaction:
+
+<Steps>
+  <Step title="Insert Sale Master Record">
+    Create the sale header with total and timestamp
+  </Step>
+
+  <Step title="Insert Sale Detail Lines">
+    Add each cart item as a sale detail row
+  </Step>
+
+  <Step title="Update Product Stock">
+    Deduct sold quantities from inventory
+  </Step>
+
+  <Step title="Record Inventory Movement">
+    Log the stock change for audit trail
+  </Step>
+</Steps>
+
+<Warning>
+  All operations happen in a **database transaction**. If any step fails (e.g., insufficient stock), the entire sale is rolled back.
+</Warning>
+
+## Event Handling
+
+The screen listens to ViewModel events for user feedback:
+
+```kotlin
+// SalesScreen.kt:66
+val snackbar = remember { SnackbarHostState() }
+
+LaunchedEffect(Unit) {
+    vm.events.collect { msg -> snackbar.showSnackbar(msg) }
+}
+```
+
+### Event Types
+
+<CardGroup cols={2}>
+  <Card title="Success Messages" icon="circle-check" color="#16a34a">
+    - "Producto agregado"
+    - "Venta realizada (#123)"
+  </Card>
+  <Card title="Error Messages" icon="circle-exclamation" color="#dc2626">
+    - "Código no encontrado"
+    - "Cantidad inválida"
+    - "Ingresa un código o selecciona un producto"
+  </Card>
+</CardGroup>
+
+## Responsive Design
+
+The form adapts to narrow screens:
+
+```kotlin
+// SalesScreen.kt:130
+BoxWithConstraints(Modifier.fillMaxWidth()) {
+    val isNarrow = maxWidth < 360.dp
+
+    if (isNarrow) {
+        // Vertical layout: Fields on top, button below
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedTextField(/* code field */, modifier = Modifier.weight(1f))
+                OutlinedTextField(/* quantity field */, modifier = Modifier.widthIn(min = 96.dp))
+            }
+            Button(
+                onClick = { /* add to cart */ },
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Agregar")
+            }
+        }
+    } else {
+        // Horizontal layout: All in one row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            OutlinedTextField(/* code field */, modifier = Modifier.weight(1f))
+            OutlinedTextField(/* quantity field */)
+            Button(onClick = { /* add to cart */ }) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Agregar")
+            }
+        }
+    }
+}
+```
+
+## Best Practices
+
+<Info>
+  **Search Optimization**: The product dropdown limits results to 12 items to prevent performance issues with large inventories. Users can type to filter further.
+</Info>
+
+<Note>
+  **Quantity Accumulation**: Adding the same product twice combines quantities in one cart line, making it easy to see totals per product.
+</Note>
+
+<Warning>
+  **Stock Validation**: The repository should validate stock levels before finalizing the sale. If stock is insufficient, the transaction fails and the cart remains intact.
+</Warning>
+
+## Price Formatting
+
+Consistent price display across the UI:
+
+```kotlin
+// SalesScreen.kt:375
+private fun fmt(n: Double) = String.format("%.2f", n)
+```
+
+Usage:
+```kotlin
+Text("S/ ${fmt(product.price)}")
+Text("S/ ${fmt(total)}")
+```
+
+## Related Components
+
+- [Dashboard](/features/dashboard) - View today's sales metrics
+- [Product Management](/features/products) - Products must exist before selling
+- [Cash Closure](/features/cash-closure) - Sales contribute to daily revenue
